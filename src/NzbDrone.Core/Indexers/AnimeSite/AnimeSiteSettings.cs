@@ -72,7 +72,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         {
             try
             {
-                var context = BrowsingContext.New(Configuration.Default);
+                var context = BrowsingContext.New(AngleSharp.Configuration.Default);
                 var doc = context.OpenAsync(req => req.Content("<html></html>")).GetAwaiter().GetResult();
                 doc.QuerySelectorAll(selector);
                 return true;

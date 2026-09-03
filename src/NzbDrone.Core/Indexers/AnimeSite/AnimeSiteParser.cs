@@ -189,7 +189,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         private static IDocument ParseHtml(string html)
         {
-            var config = Configuration.Default;
+            var config = AngleSharp.Configuration.Default;
             var context = BrowsingContext.New(config);
             return context.OpenAsync(req => req.Content(html)).GetAwaiter().GetResult();
         }

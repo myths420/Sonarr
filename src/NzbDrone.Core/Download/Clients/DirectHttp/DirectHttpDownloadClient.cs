@@ -2,7 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -223,7 +222,7 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
         {
             var request = new HttpRequest(url) { RequestTimeout = TimeSpan.FromSeconds(15) };
             var response = await _httpClient.GetAsync(request, token);
-            var config = Configuration.Default;
+            var config = AngleSharp.Configuration.Default;
             var context = BrowsingContext.New(config);
             return await context.OpenAsync(req => req.Content(response.Content), token);
         }

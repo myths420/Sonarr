@@ -1,0 +1,40 @@
+# Builds Sonarr directly from source (your fork) using its own build.sh --
+# the same script the official repo's CI uses -- instead of downloading a
+# prebuilt release like linuxserver's image does.
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+
+WORKDIR /src
+COPY . .
+
+# build.sh's frontend step needs Node/Yarn; the SDK image only has dotnet.
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    npm install -g yarn && \
+    rm -rf /var/lib/apt/lists/*
+
+# Runs build.sh's real Build()/Package() functions for linux-x64 only
+# (build.sh auto-detects Linux -> Platform=Posix, matching what the real
+# CI does on Linux runners). -f pins the framework moniker explicitly
+# instead of relying on build.sh's own default, in case that default has
+# moved on since this was written -- check src/Directory.Build.props in
+# your fork for the real <TargetFramework> if this build fails here.
+RUN chmod +x build.sh && \
+    ./build.sh --backend --frontend --packages -r linux-x64 -f net8.0
+
+# Result lands at _artifacts/linux-x64/net8.0/Sonarr per build.sh's
+# PackageLinux() function.
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+
+WORKDIR /app
+COPY --from=build /src/_artifacts/linux-x64/net8.0/Sonarr .
+
+EXPOSE 8989
+VOLUME ["/config"]
+
+# The official Linux package's entrypoint is the "Sonarr" binary itself
+# (this is what linuxserver's own systemd/s6 service ultimately execs) --
+# if this container fails to start, check the actual filename that landed
+# in /app above (it should be an executable literally named "Sonarr", no
+# extension) and adjust this line to match.
+ENTRYPOINT ["./Sonarr", "-nobrowser", "-data=/config"]

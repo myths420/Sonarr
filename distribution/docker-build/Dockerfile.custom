@@ -1,40 +1,39 @@
-# Builds Sonarr directly from source (your fork) using its own build.sh --
-# the same script the official repo's CI uses -- instead of downloading a
-# prebuilt release like linuxserver's image does.
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+# Builds Sonarr directly from source (your fork), bypassing build.sh -- v5
+# dropped it. Uses the real commands from package.json and CONTRIBUTING.md
+# instead: yarn build for frontend, dotnet publish on Sonarr.Console for
+# backend, target framework net6.0 (per wiki.servarr.com/sonarr/contributing).
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
 
 WORKDIR /src
 COPY . .
 
-# build.sh's frontend step needs Node/Yarn; the SDK image only has dotnet.
+# Node/Yarn for the frontend build (not present in the plain SDK image).
 RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     npm install -g yarn && \
     rm -rf /var/lib/apt/lists/*
 
-# Runs build.sh's real Build()/Package() functions for linux-x64 only
-# (build.sh auto-detects Linux -> Platform=Posix, matching what the real
-# CI does on Linux runners). -f pins the framework moniker explicitly
-# instead of relying on build.sh's own default, in case that default has
-# moved on since this was written -- check src/Directory.Build.props in
-# your fork for the real <TargetFramework> if this build fails here.
-RUN chmod +x build.sh && \
-    ./build.sh --backend --frontend --packages -r linux-x64 -f net8.0
+RUN yarn install --frozen-lockfile
+RUN yarn build --env production
 
-# Result lands at _artifacts/linux-x64/net8.0/Sonarr per build.sh's
-# PackageLinux() function.
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+# NOTE: exact csproj path is my best-confidence guess based on Sonarr's
+# established project layout (NzbDrone.Console historically houses the
+# Sonarr.Console startup project). If this path is wrong the build will
+# fail here with a clear "file not found" -- check src/ in your repo for
+# the real path and fix this line.
+RUN dotnet publish src/NzbDrone.Console/Sonarr.Console.csproj \
+    -c Release -r linux-x64 --self-contained false -o /app/publish
 
+FROM mcr.microsoft.com/dotnet/aspnet:6.0
 WORKDIR /app
-COPY --from=build /src/_artifacts/linux-x64/net8.0/Sonarr .
+COPY --from=build /app/publish .
+COPY --from=build /src/_output/UI ./UI
 
 EXPOSE 8989
 VOLUME ["/config"]
 
-# The official Linux package's entrypoint is the "Sonarr" binary itself
-# (this is what linuxserver's own systemd/s6 service ultimately execs) --
-# if this container fails to start, check the actual filename that landed
-# in /app above (it should be an executable literally named "Sonarr", no
-# extension) and adjust this line to match.
-ENTRYPOINT ["./Sonarr", "-nobrowser", "-data=/config"]
+# NOTE: "Sonarr.dll" is a guess at the published output's entry assembly
+# name -- if this fails on start, check what .dll actually landed in
+# /app/publish above and fix this line to match.
+ENTRYPOINT ["dotnet", "Sonarr.dll", "-nobrowser", "-data=/config"]

@@ -65,6 +65,7 @@ public class SiteShowController : Controller
         }
 
         var seriesByCleanTitle = new Dictionary<string, NzbDrone.Core.Tv.Series>();
+        var seriesByAniListId = new Dictionary<int, NzbDrone.Core.Tv.Series>();
         foreach (var series in _seriesService.GetAllSeries())
         {
             var clean = series.Title.CleanSeriesTitle();
@@ -72,12 +73,36 @@ public class SiteShowController : Controller
             {
                 seriesByCleanTitle.TryAdd(clean, series);
             }
+
+            foreach (var aniListId in series.AniListIds)
+            {
+                seriesByAniListId.TryAdd(aniListId, series);
+            }
         }
 
         foreach (var resource in resources)
         {
-            var clean = (resource.Title ?? string.Empty).CleanSeriesTitle();
-            if (!string.IsNullOrEmpty(clean) && seriesByCleanTitle.TryGetValue(clean, out var series))
+            NzbDrone.Core.Tv.Series? series = null;
+
+            // AniList id is the reliable link for series this fork added from
+            // the catalogue (their Sonarr title comes from AniList and may
+            // not match the site's title). Fall back to a cleaned-title match
+            // for series added by hand / from TheTVDB.
+            if (resource.AniListId > 0)
+            {
+                seriesByAniListId.TryGetValue(resource.AniListId, out series);
+            }
+
+            if (series == null)
+            {
+                var clean = (resource.Title ?? string.Empty).CleanSeriesTitle();
+                if (!string.IsNullOrEmpty(clean))
+                {
+                    seriesByCleanTitle.TryGetValue(clean, out series);
+                }
+            }
+
+            if (series != null)
             {
                 resource.SeriesId = series.Id;
                 resource.SeriesTitleSlug = series.TitleSlug;
@@ -138,5 +163,37 @@ public class SiteShowController : Controller
         }
 
         return download.ToResource();
+    }
+
+    // Creates a real, monitored Sonarr series (AniList-backed, not TheTVDB)
+    // for this catalogue show so it shows up in the Series tab and gets
+    // Sonarr's daily new-episode handling. Returns the re-linked site show
+    // (seriesId / seriesTitleSlug now populated).
+    [HttpPost("{id:int}/add")]
+    [Produces("application/json")]
+    public ActionResult<SiteShowResource> AddSiteShowAsSeries(int id, [FromBody] SiteShowAddResource? request)
+    {
+        var show = _siteShowService.Get(id);
+        if (show == null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            _siteShowService.AddAsSeries(
+                id,
+                request?.RootFolderPath,
+                request?.QualityProfileId,
+                request?.SearchForMissingEpisodes ?? false);
+        }
+        catch (SiteSeriesAddException ex)
+        {
+            return UnprocessableEntity(ex.Message);
+        }
+
+        var resource = _siteShowService.Get(id).ToResource()!;
+        LinkLibrarySeries(new List<SiteShowResource> { resource });
+        return resource;
     }
 }

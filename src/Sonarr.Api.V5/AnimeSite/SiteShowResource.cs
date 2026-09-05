@@ -24,6 +24,15 @@ public class SiteShowResource : RestResource
     public string? SeriesTitleSlug { get; set; }
 }
 
+// Body for POST /siteshow/{id}/add. All optional -- omitted fields fall
+// back to the first configured root folder / quality profile.
+public class SiteShowAddResource
+{
+    public string? RootFolderPath { get; set; }
+    public int? QualityProfileId { get; set; }
+    public bool SearchForMissingEpisodes { get; set; }
+}
+
 public static class SiteShowResourceMapper
 {
     public static SiteShowResource? ToResource(this SiteShow? model)

@@ -127,6 +127,12 @@
   color: var(--primaryColor);
 }
 
+.addError {
+  margin-right: auto;
+  color: var(--dangerColor);
+  font-size: 12px;
+}
+
 .episodeProgress {
   display: flex;
   align-items: center;

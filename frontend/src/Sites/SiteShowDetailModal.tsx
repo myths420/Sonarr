@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import Alert from 'Components/Alert';
 import TextInput from 'Components/Form/TextInput';
 import Label from 'Components/Label';
@@ -20,6 +21,7 @@ import SiteShow from './SiteShow';
 import styles from './SiteShowDetailModal.css';
 import useSiteDownloads, { useDownloadEpisodes } from './useSiteDownloads';
 import useSiteShowEpisodes, { useEpisodeReleases } from './useSiteShowEpisodes';
+import { useAddSiteShowAsSeries } from './useSiteShows';
 
 interface SiteShowDetailModalProps {
   isOpen: boolean;
@@ -114,6 +116,16 @@ function SiteShowDetailModal({
 
   const { downloadEpisodes, downloadEpisode, isDownloading, downloadError } =
     useDownloadEpisodes(show.id);
+
+  const navigate = useNavigate();
+  const { addAsSeries, isAdding, addError } = useAddSiteShowAsSeries();
+
+  const handleAddAsSeries = useCallback(async () => {
+    const result = await addAsSeries(show.id);
+    if (result?.seriesTitleSlug) {
+      navigate(`/series/${result.seriesTitleSlug}`);
+    }
+  }, [addAsSeries, navigate, show.id]);
 
   const { data: downloads } = useSiteDownloads();
   const downloadsByEpisode = useMemo(() => {
@@ -361,6 +373,10 @@ function SiteShowDetailModal({
         </ModalBody>
 
         <ModalFooter>
+          {addError ? (
+            <span className={styles.addError}>{addError}</span>
+          ) : null}
+
           {show.seriesId && show.seriesTitleSlug ? (
             <Link
               className={styles.libraryLink}
@@ -369,12 +385,14 @@ function SiteShowDetailModal({
               {translate('SitesOpenInSonarr')}
             </Link>
           ) : (
-            <Link
+            <Button
               className={styles.libraryLink}
-              to={`/add/new?term=${encodeURIComponent(title)}`}
+              kind={kinds.PRIMARY}
+              isDisabled={isAdding}
+              onPress={handleAddAsSeries}
             >
-              {translate('SitesAddToSonarr')}
-            </Link>
+              {isAdding ? translate('Adding') : translate('SitesAddToSonarr')}
+            </Button>
           )}
           <Link to={url}>{translate('ViewOnSite')}</Link>
           <Button onPress={onModalClose}>{translate('Close')}</Button>

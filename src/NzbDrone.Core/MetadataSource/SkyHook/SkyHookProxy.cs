@@ -12,6 +12,7 @@ using NzbDrone.Core.DataAugmentation.DailySeries;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MetadataSource.AniList;
 using NzbDrone.Core.MetadataSource.SkyHook.Resource;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Tv;
@@ -24,12 +25,14 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         private readonly Logger _logger;
         private readonly ISeriesService _seriesService;
         private readonly IDailySeriesService _dailySeriesService;
+        private readonly IAniListSeriesInfoProxy _aniListSeriesInfoProxy;
         private readonly IHttpRequestBuilderFactory _requestBuilder;
 
         public SkyHookProxy(IHttpClient httpClient,
                             ISonarrCloudRequestBuilder requestBuilder,
                             ISeriesService seriesService,
                             IDailySeriesService dailySeriesService,
+                            IAniListSeriesInfoProxy aniListSeriesInfoProxy,
                             Logger logger)
         {
             _httpClient = httpClient;
@@ -37,11 +40,20 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             _logger = logger;
             _seriesService = seriesService;
             _dailySeriesService = dailySeriesService;
+            _aniListSeriesInfoProxy = aniListSeriesInfoProxy;
             _requestBuilder = requestBuilder.SkyHookTvdb;
         }
 
         public Tuple<Series, List<Episode>> GetSeriesInfo(int tvdbSeriesId)
         {
+            // AniList-backed series (this fork's anime/donghua additions that
+            // aren't on TheTVDB) carry a synthetic id -- serve those from
+            // AniList instead of hitting SkyHook with an id it won't know.
+            if (AniListSeriesIds.IsAniListId(tvdbSeriesId))
+            {
+                return _aniListSeriesInfoProxy.GetSeriesInfo(AniListSeriesIds.ToAniListId(tvdbSeriesId));
+            }
+
             var httpRequest = _requestBuilder.Create()
                                              .SetSegment("route", "shows")
                                              .Resource(tvdbSeriesId.ToString())

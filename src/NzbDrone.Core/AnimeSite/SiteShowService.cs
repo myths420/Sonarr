@@ -9,7 +9,11 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MetadataSource.AniList;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.ThingiProvider.Events;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.AnimeSite
 {
@@ -45,6 +49,21 @@ namespace NzbDrone.Core.AnimeSite
         // Returns an empty list (not an exception) if no matching indexer is
         // configured, or the requested episode number isn't found.
         List<ResolvedRelease> ResolveEpisodeReleases(int showId, int episodeNumber);
+
+        // Creates a real Sonarr Series for this catalogue show so it appears
+        // in the Series tab and gets Sonarr's monitoring / daily new-episode
+        // handling. Backed by AniList (not TheTVDB) via a synthetic id -- see
+        // AniListSeriesIds. Throws SiteSeriesAddException if the show has no
+        // AniList match (nothing to build episodes/air-dates from yet).
+        Series AddAsSeries(int showId, string rootFolderPath, int? qualityProfileId, bool searchForMissingEpisodes);
+    }
+
+    public class SiteSeriesAddException : Exception
+    {
+        public SiteSeriesAddException(string message)
+            : base(message)
+        {
+        }
     }
 
     public class SiteShowService : ISiteShowService, IExecute<SiteShowSyncCommand>, IHandleAsync<ProviderDeletedEvent<IImportList>>
@@ -59,6 +78,10 @@ namespace NzbDrone.Core.AnimeSite
         private readonly IShowMetadataProvider _metadataProvider;
         private readonly ISiteScrapeMetadataProvider _scrapeMetadataProvider;
         private readonly ISiteShowPosterService _posterService;
+        private readonly IAddSeriesService _addSeriesService;
+        private readonly ISeriesService _seriesService;
+        private readonly IRootFolderService _rootFolderService;
+        private readonly IQualityProfileService _qualityProfileService;
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
 
@@ -70,6 +93,10 @@ namespace NzbDrone.Core.AnimeSite
                                IShowMetadataProvider metadataProvider,
                                ISiteScrapeMetadataProvider scrapeMetadataProvider,
                                ISiteShowPosterService posterService,
+                               IAddSeriesService addSeriesService,
+                               ISeriesService seriesService,
+                               IRootFolderService rootFolderService,
+                               IQualityProfileService qualityProfileService,
                                IHttpClient httpClient,
                                Logger logger)
         {
@@ -81,6 +108,10 @@ namespace NzbDrone.Core.AnimeSite
             _metadataProvider = metadataProvider;
             _scrapeMetadataProvider = scrapeMetadataProvider;
             _posterService = posterService;
+            _addSeriesService = addSeriesService;
+            _seriesService = seriesService;
+            _rootFolderService = rootFolderService;
+            _qualityProfileService = qualityProfileService;
             _httpClient = httpClient;
             _logger = logger;
         }
@@ -271,6 +302,96 @@ namespace NzbDrone.Core.AnimeSite
 
             var options = AnimeSiteReleaseOptions.FromSettings(indexerSettings);
             return _releaseResolver.GetReleases(options, episodeHtml, episode.Url, show.Title, episodeNumber, _logger);
+        }
+
+        public Series AddAsSeries(int showId, string rootFolderPath, int? qualityProfileId, bool searchForMissingEpisodes)
+        {
+            var show = _repository.Get(showId);
+            if (show == null)
+            {
+                throw new SiteSeriesAddException("Site show not found.");
+            }
+
+            var aniListId = show.AniListId;
+            if (aniListId <= 0)
+            {
+                // No id stored yet -- try a live lookup so the user doesn't
+                // have to wait for the next metadata backfill.
+                aniListId = _metadataProvider.Lookup(show.Title)?.AniListId ?? 0;
+            }
+
+            if (aniListId <= 0)
+            {
+                throw new SiteSeriesAddException(
+                    $"'{show.Title}' has no AniList match yet, so a tracked series (with episode air dates) can't be created. Try again after the next metadata refresh.");
+            }
+
+            var syntheticId = AniListSeriesIds.FromAniListId(aniListId);
+
+            var existing = _seriesService.FindByTvdbId(syntheticId);
+            if (existing != null)
+            {
+                _logger.Info("Site show '{0}' is already in the library as series {1}", show.Title, existing.Id);
+                return existing;
+            }
+
+            var resolvedRoot = ResolveRootFolder(rootFolderPath);
+            var resolvedProfile = ResolveQualityProfile(qualityProfileId);
+
+            var newSeries = new Series
+            {
+                TvdbId = syntheticId,
+                AniListIds = new HashSet<int> { aniListId },
+                QualityProfileId = resolvedProfile,
+                RootFolderPath = resolvedRoot,
+                SeasonFolder = true,
+                Monitored = true,
+                MonitorNewItems = NewItemMonitorTypes.All,
+                SeriesType = SeriesTypes.Anime,
+                AddOptions = new AddSeriesOptions
+                {
+                    Monitor = MonitorTypes.All,
+                    SearchForMissingEpisodes = searchForMissingEpisodes,
+                    SearchForCutoffUnmetEpisodes = false
+                }
+            };
+
+            var added = _addSeriesService.AddSeries(newSeries);
+            _logger.Info("Added site show '{0}' as AniList-backed series {1} (anilist:{2})", show.Title, added.Id, aniListId);
+
+            return added;
+        }
+
+        private string ResolveRootFolder(string rootFolderPath)
+        {
+            if (!string.IsNullOrWhiteSpace(rootFolderPath))
+            {
+                return rootFolderPath;
+            }
+
+            var first = _rootFolderService.All().FirstOrDefault();
+            if (first == null)
+            {
+                throw new SiteSeriesAddException("No root folder configured. Add one under Settings > Media Management.");
+            }
+
+            return first.Path;
+        }
+
+        private int ResolveQualityProfile(int? qualityProfileId)
+        {
+            if (qualityProfileId is > 0 && _qualityProfileService.Exists(qualityProfileId.Value))
+            {
+                return qualityProfileId.Value;
+            }
+
+            var first = _qualityProfileService.All().FirstOrDefault();
+            if (first == null)
+            {
+                throw new SiteSeriesAddException("No quality profile configured.");
+            }
+
+            return first.Id;
         }
 
         // AnimeSiteIndexer and AnimeSiteImportList are two independent

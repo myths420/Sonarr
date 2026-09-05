@@ -15,19 +15,29 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return new IndexerPageableRequestChain();
         }
 
+        // Builds the search URL from Settings.SearchUrlPattern instead of a
+        // hardcoded "/?s=" scheme -- a site using a different search path
+        // (or query param name) just needs a different pattern here, not a
+        // code change.
+        private string BuildSearchUrl(string title)
+        {
+            var query = System.Uri.EscapeDataString(title);
+            var pattern = string.IsNullOrWhiteSpace(Settings.SearchUrlPattern) ? "/?s={query}" : Settings.SearchUrlPattern;
+            var path = pattern.Replace("{query}", query);
+            return path.StartsWith("http") ? path : $"{Settings.BaseUrl.TrimEnd('/')}/{path.TrimStart('/')}";
+        }
+
         public IndexerPageableRequestChain GetSearchRequests(AnimeEpisodeSearchCriteria searchCriteria)
         {
             var chain = new IndexerPageableRequestChain();
-            var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/?s={System.Uri.EscapeDataString(searchCriteria.Series.Title)}";
-            chain.Add(new[] { new IndexerRequest(searchUrl, HttpAccept.Html) });
+            chain.Add(new[] { new IndexerRequest(BuildSearchUrl(searchCriteria.Series.Title), HttpAccept.Html) });
             return chain;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(AnimeSeasonSearchCriteria searchCriteria)
         {
             var chain = new IndexerPageableRequestChain();
-            var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/?s={System.Uri.EscapeDataString(searchCriteria.Series.Title)}";
-            chain.Add(new[] { new IndexerRequest(searchUrl, HttpAccept.Html) });
+            chain.Add(new[] { new IndexerRequest(BuildSearchUrl(searchCriteria.Series.Title), HttpAccept.Html) });
             return chain;
         }
 

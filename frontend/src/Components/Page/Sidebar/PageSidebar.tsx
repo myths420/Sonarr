@@ -20,6 +20,7 @@ import OverlayScroller from 'Components/Scroller/OverlayScroller';
 import Scroller from 'Components/Scroller/Scroller';
 import usePrevious from 'Helpers/Hooks/usePrevious';
 import { icons } from 'Helpers/Props';
+import useSites from 'Sites/useSites';
 import dimensions from 'Styles/Variables/dimensions';
 import HealthStatus from 'System/Status/Health/HealthStatus';
 import translate from 'Utilities/String/translate';
@@ -65,6 +66,18 @@ const LINKS: SidebarItem[] = [
       {
         title: () => translate('Statistics'),
         to: '/statistics',
+      },
+    ],
+  },
+
+  {
+    iconName: icons.SEARCH,
+    title: () => translate('Sites'),
+    to: '/sites',
+    children: [
+      {
+        title: () => translate('SitesDownloads'),
+        to: '/sites/downloads',
       },
     ],
   },
@@ -237,9 +250,39 @@ function PageSidebar() {
 
   const { pathname } = location;
 
+  const { data: sites } = useSites();
+
+  // The "Sites" entry lists one child per configured AnimeSite instance
+  // (each site has its own catalogue), then the shared Downloads view.
+  const links = useMemo<SidebarItem[]>(() => {
+    if (sites.length === 0) {
+      return LINKS;
+    }
+
+    return LINKS.map((link) => {
+      if (link.to !== '/sites') {
+        return link;
+      }
+
+      const children: NonNullable<SidebarItem['children']> = sites.map(
+        (site) => ({
+          title: site.name,
+          to: `/sites/${site.id}`,
+        })
+      );
+
+      children.push({
+        title: () => translate('SitesDownloads'),
+        to: '/sites/downloads',
+      });
+
+      return { ...link, children };
+    });
+  }, [sites]);
+
   const activeParent = useMemo(() => {
     return (
-      LINKS.find((link) => {
+      links.find((link) => {
         if (link.to && link.to === pathname) {
           return true;
         }
@@ -264,9 +307,9 @@ function PageSidebar() {
         }
 
         return false;
-      })?.to ?? LINKS[0].to
+      })?.to ?? links[0].to
     );
-  }, [pathname]);
+  }, [pathname, links]);
 
   const handleWindowClick = useCallback(
     (event: MouseEvent) => {
@@ -472,7 +515,7 @@ function PageSidebar() {
         }}
       >
         <div>
-          {LINKS.map((link) => {
+          {links.map((link) => {
             const childWithStatusComponent = link.children?.find((child) => {
               return !!child.statusComponent;
             });

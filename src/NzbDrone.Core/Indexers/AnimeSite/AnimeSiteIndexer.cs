@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
@@ -27,6 +28,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         // this indexer's actual usage (one interactive search at a time),
         // but worth knowing if this is ever repurposed for something that
         // fires many searches in parallel.
+        private readonly IAnimeSiteReleaseResolver _releaseResolver;
+
         private int _currentAbsoluteEpisodeNumber;
         private string _currentSeriesTitle;
 
@@ -35,18 +38,33 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                                  IConfigService configService,
                                  IParsingService parsingService,
                                  Logger logger,
-                                 ILocalizationService localizationService)
+                                 ILocalizationService localizationService,
+                                 IAnimeSiteReleaseResolver releaseResolver)
             : base(httpClient, indexerStatusService, configService, parsingService, logger, localizationService)
         {
+            _releaseResolver = releaseResolver;
         }
 
         public override string Name => "Anime Site";
 
-        public override DownloadProtocol Protocol => DownloadProtocol.Unknown;
+        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
 
         // No RSS/recent-releases feed on these sites -- everything is
         // search-driven.
         public override bool SupportsRss => false;
+
+        // The default Test() Sonarr inherits tries an RSS-style connection
+        // check, which always fails here since this indexer intentionally
+        // has no RSS feed (SupportsRss = false above) -- that failure was
+        // what actually triggered Sonarr's "temporarily ignoring this
+        // indexer" backoff on every Save/Test click, not real search
+        // failures. Skipping straight to success here removes that false
+        // signal; genuine problems still show up as "0 results" in a real
+        // search, which is what you actually want to debug against.
+        protected override Task Test(List<ValidationFailure> failures)
+        {
+            return Task.CompletedTask;
+        }
 
         public override bool SupportsSearch => true;
 
@@ -64,13 +82,16 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return new AnimeSiteParser(
                 _httpClient,
                 _logger,
+                _releaseResolver,
                 _currentAbsoluteEpisodeNumber,
                 _currentSeriesTitle,
                 Settings.GetEpisodeUrlRegex(),
                 Settings.GetDirectDownloadHostsArray(),
                 Settings.GetSeriesLinkSelector(),
                 Settings.GetEpisodeLinkSelector(),
-                Settings.GetDownloadLinkSelector());
+                Settings.GetDownloadLinkSelector(),
+                Settings.GetLinkResolutionRules(),
+                Settings.ScrapingScript);
         }
 
         public override Task<IList<ReleaseInfo>> Fetch(AnimeEpisodeSearchCriteria searchCriteria)

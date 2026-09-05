@@ -21,6 +21,7 @@ enum CommandNames {
   RssSync = 'RssSync',
   SeasonSearch = 'SeasonSearch',
   SeriesSearch = 'SeriesSearch',
+  SiteShowSync = 'SiteShowSync',
 }
 
 export default CommandNames;

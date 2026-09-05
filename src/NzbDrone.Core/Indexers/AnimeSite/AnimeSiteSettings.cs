@@ -17,6 +17,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         {
             RuleFor(c => c.BaseUrl).ValidRootUrl();
 
+            RuleFor(c => c.SearchUrlPattern).NotEmpty()
+                .WithMessage("'Search URL Pattern' must not be empty.");
+            RuleFor(c => c.SearchUrlPattern).Must(p => p.Contains("{query}"))
+                .WithMessage("'Search URL Pattern' must contain a {query} placeholder, e.g. /?s={query}")
+                .When(c => !string.IsNullOrWhiteSpace(c.SearchUrlPattern));
+
             RuleFor(c => c.EpisodeUrlPattern).NotEmpty()
                 .WithMessage("'Episode URL Pattern' must not be empty.");
 
@@ -30,6 +36,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             RuleFor(c => c.DirectDownloadHosts).NotEmpty()
                 .WithMessage("'Direct Download Hosts' must list at least one host.");
+
+            RuleFor(c => c.LinkResolutionRules).Must(BeValidResolutionRulesJson)
+                .WithMessage("'Link Resolution Rules' must be a JSON array of objects, each with a 'hostContains' string and either a 'resolveSelector' string or both 'urlReplaceFrom'/'urlReplaceTo' strings.")
+                .When(c => !string.IsNullOrWhiteSpace(c.LinkResolutionRules));
 
             RuleFor(c => c.SeriesLinkSelector).NotEmpty()
                 .WithMessage("'Series Link Selector' must not be empty.");
@@ -82,6 +92,60 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 return false;
             }
         }
+
+        private static bool BeValidResolutionRulesJson(string json)
+        {
+            try
+            {
+                var rules = System.Text.Json.JsonSerializer.Deserialize<List<LinkResolutionRule>>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (rules == null)
+                {
+                    return false;
+                }
+
+                foreach (var rule in rules)
+                {
+                    if (string.IsNullOrWhiteSpace(rule.HostContains))
+                    {
+                        return false;
+                    }
+
+                    var hasSelector = !string.IsNullOrWhiteSpace(rule.ResolveSelector);
+                    var hasReplace = !string.IsNullOrWhiteSpace(rule.UrlReplaceFrom) && rule.UrlReplaceTo != null;
+                    if (!hasSelector && !hasReplace)
+                    {
+                        return false;
+                    }
+
+                    if (hasSelector && !BeAValidCssSelector(rule.ResolveSelector))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
+    // One "hop" the link resolver can perform on a candidate download URL:
+    // if the URL's host matches HostContains, either (a) fetch that page and
+    // replace the URL with the href found by ResolveSelector (e.g.
+    // Mediafire's landing-page "Download" button), or (b) do a plain string
+    // substitution on the URL (e.g. mirrored.to's dl=0 -> dl=1). Rules are
+    // tried in order, repeatedly, until none match or a hop limit is hit --
+    // this is what makes a new site's landing-page quirks editable from
+    // Sonarr's UI instead of needing a C# code change.
+    public class LinkResolutionRule
+    {
+        public string HostContains { get; set; }
+        public string ResolveSelector { get; set; }
+        public string UrlReplaceFrom { get; set; }
+        public string UrlReplaceTo { get; set; }
     }
 
     // One instance of this indexer = one website. Add another instance
@@ -105,11 +169,13 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         public AnimeSiteSettings()
         {
             BaseUrl = "https://animexin.dev";
+            SearchUrlPattern = "/?s={query}";
             SeriesLinkSelector = "a[href]";
             EpisodeLinkSelector = "a[href]";
             EpisodeUrlPattern = @"-episode-(\d+)(?:-|/|$)";
             DownloadLinkSelector = "a[href]";
             DirectDownloadHosts = "mediafire.com,mirrored.to,terabox.com,1024terabox.com";
+            LinkResolutionRules = "[{\"hostContains\":\"mediafire.com\",\"resolveSelector\":\"a#downloadButton[href], a.input.popsok[href]\"},{\"hostContains\":\"mirrored.to\",\"urlReplaceFrom\":\"dl=0\",\"urlReplaceTo\":\"dl=1\"}]";
             MultiLanguages = Array.Empty<int>();
             FailDownloads = Array.Empty<int>();
         }
@@ -117,25 +183,34 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         [FieldDefinition(0, Label = "Website URL", HelpText = "The site to search, e.g. https://animexin.dev or https://donghuaworld.com")]
         public string BaseUrl { get; set; }
 
-        [FieldDefinition(1, Label = "Series Link Selector", Type = FieldType.Textbox, Advanced = true, HelpText = "CSS selector for candidate series links on the search-results page. Each matched element's text is compared against the series title. Default 'a[href]' checks every link on the page -- narrow this (e.g. '.result-item a') if that's too slow or matches the wrong things.")]
+        [FieldDefinition(1, Label = "Search URL Pattern", Type = FieldType.Textbox, HelpText = "Path (relative to Website URL) used to search this site. {query} is replaced with the URL-encoded series title. Default: /?s={query}")]
+        public string SearchUrlPattern { get; set; }
+
+        [FieldDefinition(2, Label = "Series Link Selector", Type = FieldType.Textbox, Advanced = true, HelpText = "CSS selector for candidate series links on the search-results page. Each matched element's text is compared against the series title. Default 'a[href]' checks every link on the page -- narrow this (e.g. '.result-item a') if that's too slow or matches the wrong things.")]
         public string SeriesLinkSelector { get; set; }
 
-        [FieldDefinition(2, Label = "Episode Link Selector", Type = FieldType.Textbox, Advanced = true, HelpText = "CSS selector for candidate episode links on a series page. Narrow this (e.g. '.eplister a') if the default 'a[href]' picks up unrelated links (related-shows widgets, etc.) that happen to match the Episode URL Pattern below.")]
+        [FieldDefinition(3, Label = "Episode Link Selector", Type = FieldType.Textbox, Advanced = true, HelpText = "CSS selector for candidate episode links on a series page. Narrow this (e.g. '.eplister a') if the default 'a[href]' picks up unrelated links (related-shows widgets, etc.) that happen to match the Episode URL Pattern below.")]
         public string EpisodeLinkSelector { get; set; }
 
-        [FieldDefinition(3, Label = "Episode URL Pattern", Type = FieldType.Textbox, HelpText = "Regex with one capture group matching the absolute episode number in an episode link's URL. Default matches URLs like .../show-episode-42-subbed/")]
+        [FieldDefinition(4, Label = "Episode URL Pattern", Type = FieldType.Textbox, HelpText = "Regex with one capture group matching the absolute episode number in an episode link's URL. Default matches URLs like .../show-episode-42-subbed/")]
         public string EpisodeUrlPattern { get; set; }
 
-        [FieldDefinition(4, Label = "Download Link Selector", Type = FieldType.Textbox, Advanced = true, HelpText = "CSS selector for candidate download links on an episode page. Narrow this (e.g. '.soraurlx a') if the default 'a[href]' picks up unrelated links that happen to point at one of the Direct Download Hosts below.")]
+        [FieldDefinition(5, Label = "Download Link Selector", Type = FieldType.Textbox, Advanced = true, HelpText = "CSS selector for candidate download links on an episode page. Narrow this (e.g. '.soraurlx a') if the default 'a[href]' picks up unrelated links that happen to point at one of the Direct Download Hosts below.")]
         public string DownloadLinkSelector { get; set; }
 
-        [FieldDefinition(5, Label = "Direct Download Hosts", Type = FieldType.Textbox, HelpText = "Comma-separated list of hostnames that count as a real direct-download link on an episode page (e.g. mediafire.com,mirrored.to). Links to any other host are ignored.")]
+        [FieldDefinition(6, Label = "Direct Download Hosts", Type = FieldType.Textbox, HelpText = "Comma-separated list of hostnames that count as a real direct-download link on an episode page (e.g. mediafire.com,mirrored.to). Links to any other host are ignored.")]
         public string DirectDownloadHosts { get; set; }
 
-        [FieldDefinition(6, Type = FieldType.Select, SelectOptions = typeof(RealLanguageFieldConverter), Label = "IndexerSettingsMultiLanguageRelease", HelpText = "IndexerSettingsMultiLanguageReleaseHelpText", Advanced = true)]
+        [FieldDefinition(7, Label = "Link Resolution Rules", Type = FieldType.Textbox, Advanced = true, HelpText = "JSON array describing how to turn a landing-page link into the real file URL, per host -- this is the part that's genuinely different per site (e.g. Mediafire needs its Download button's href scraped from a second page; mirrored.to just needs dl=0 changed to dl=1 in the URL). Each entry: {\"hostContains\":\"...\", \"resolveSelector\":\"...\"} to fetch the page and pull a link out via CSS selector, or {\"hostContains\":\"...\", \"urlReplaceFrom\":\"...\", \"urlReplaceTo\":\"...\"} for a plain substitution. Add more entries here for a new site instead of writing code. Ignored entirely if Scraping Script (below) is set.")]
+        public string LinkResolutionRules { get; set; }
+
+        [FieldDefinition(8, Label = "Scraping Script", Type = FieldType.Textbox, Advanced = true, HelpText = "Optional JavaScript that fully replaces ALL of the fields above -- write your own findSeriesUrl(searchHtml, seriesTitle), findEpisodeUrl(seriesHtml, episodeNumber), and getReleases(episodeHtml, episodeUrl, seriesTitle, episodeNumber) functions. Use host.get(url), host.select(html, cssSelector) (returns a JSON array of {text,href}, use JSON.parse), host.selectOne(html, cssSelector) (JSON object or null), and host.log(msg). getReleases must return JSON.stringify()'d [{title, url}, ...] -- do quality/language filtering and any landing-page hop-following (call host.get again) right in the script. This is what lets a genuinely arbitrary site (not just ones shaped like animexin) be added without a code change. Leave empty to use the simpler fields above instead.")]
+        public string ScrapingScript { get; set; }
+
+        [FieldDefinition(9, Type = FieldType.Select, SelectOptions = typeof(RealLanguageFieldConverter), Label = "IndexerSettingsMultiLanguageRelease", HelpText = "IndexerSettingsMultiLanguageReleaseHelpText", Advanced = true)]
         public IEnumerable<int> MultiLanguages { get; set; }
 
-        [FieldDefinition(7, Type = FieldType.Select, SelectOptions = typeof(FailDownloads), Label = "IndexerSettingsFailDownloads", HelpText = "IndexerSettingsFailDownloadsHelpText", Advanced = true)]
+        [FieldDefinition(10, Type = FieldType.Select, SelectOptions = typeof(FailDownloads), Label = "IndexerSettingsFailDownloads", HelpText = "IndexerSettingsFailDownloadsHelpText", Advanced = true)]
         public IEnumerable<int> FailDownloads { get; set; }
 
         // Parsed/derived helpers used by AnimeSiteIndexer when constructing
@@ -159,6 +234,24 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         }
 
         public string GetSeriesLinkSelector() => string.IsNullOrWhiteSpace(SeriesLinkSelector) ? "a[href]" : SeriesLinkSelector;
+
+        public List<LinkResolutionRule> GetLinkResolutionRules()
+        {
+            if (string.IsNullOrWhiteSpace(LinkResolutionRules))
+            {
+                return new List<LinkResolutionRule>();
+            }
+
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<LinkResolutionRule>>(LinkResolutionRules, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<LinkResolutionRule>();
+            }
+            catch
+            {
+                return new List<LinkResolutionRule>();
+            }
+        }
+
         public string GetEpisodeLinkSelector() => string.IsNullOrWhiteSpace(EpisodeLinkSelector) ? "a[href]" : EpisodeLinkSelector;
         public string GetDownloadLinkSelector() => string.IsNullOrWhiteSpace(DownloadLinkSelector) ? "a[href]" : DownloadLinkSelector;
 

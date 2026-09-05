@@ -1,0 +1,74 @@
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--defaultColor);
+  overflow: hidden;
+}
+
+.underlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  appearance: none;
+}
+
+.posterContainer {
+  position: relative;
+  width: 100%;
+  padding-top: 140%;
+  background-color: var(--tableRowHoverBackgroundColor);
+}
+
+.poster {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.posterPlaceholder {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--disabledColor);
+}
+
+.content {
+  padding: 8px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: bold;
+  line-height: 1.3;
+}
+
+.year {
+  font-weight: normal;
+  color: var(--disabledColor);
+}
+
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}

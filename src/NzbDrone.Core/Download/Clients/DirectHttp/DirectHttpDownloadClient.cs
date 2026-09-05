@@ -2,14 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using AngleSharp;
-using AngleSharp.Dom;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers;
@@ -21,68 +21,75 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
 {
     // A "real" download client: unlike SABnzbd/qBittorrent/etc, which hand a
     // link to an external app and poll its status, this one does the actual
-    // HTTP resolution + byte transfer itself, in-process. This is a direct
-    // port of the working Python pipeline (main.py's landing-page
-    // resolution + scraper.py's Download class) into Sonarr's own
-    // IDownloadClient interface.
+    // HTTP transfer itself, in-process. Direct port of the working Python
+    // pipeline (main.py's landing-page resolution + scraper.py's Download).
     //
-    // SCOPE OF THIS FILE: plain direct-file downloads (the mediafire/
-    // mirrored.to/generic-host path). It does NOT yet include the HLS/
-    // ffmpeg path or the Dailymotion/Rumble/gdriveplayer embed-resolution
-    // logic from hls.py -- that's a separate, larger port and should live
-    // in its own resolver class called from RunDownloadAsync below (there's
-    // a clearly marked spot for it).
+    // SCOPE: plain direct-file downloads (mediafire/mirrored.to/generic
+    // host). No HLS/ffmpeg/Dailymotion-embed path yet -- that's a separate
+    // larger port (see hls.py).
     //
-    // KNOWN LIMITATION: progress/queue state lives in an in-memory
-    // dictionary (_items). If Sonarr restarts mid-download, that state is
-    // lost (the file on disk survives, but Sonarr won't know about it) --
-    // none of the built-in clients have this problem because the external
-    // app keeps its own state. A production version should persist queue
-    // state (e.g. to Sonarr's DB) and requeue on startup.
+    // Each download goes into its own subfolder of DestinationDirectory
+    // (like a real download client's per-torrent folder) so Sonarr's import
+    // treats it as a discrete download and organises the file into the
+    // series/season folder, rather than leaving it loose next to the media.
+    //
+    // Queue state is kept in-memory AND mirrored to a small JSON file under
+    // the config folder, so a Sonarr restart between "download finished" and
+    // "Sonarr imported it" doesn't lose the completed download.
     public class DirectHttpDownloadClient : DownloadClientBase<DirectHttpDownloadClientSettings>
     {
         private static readonly ConcurrentDictionary<string, DirectDownloadState> _items = new();
+        private static readonly object _persistLock = new();
+        private static bool _loaded;
+
         private readonly IHttpClient _httpClient;
+        private readonly string _statePath;
 
         public DirectHttpDownloadClient(IHttpClient httpClient,
                                          IConfigService configService,
                                          IDiskProvider diskProvider,
                                          IRemotePathMappingService remotePathMappingService,
+                                         IAppFolderInfo appFolderInfo,
                                          Logger logger,
                                          ILocalizationService localizationService)
             : base(configService, diskProvider, remotePathMappingService, logger, localizationService)
         {
             _httpClient = httpClient;
+            _statePath = Path.Combine(appFolderInfo.AppDataFolder, "directhttp_downloads.json");
+
+            lock (_persistLock)
+            {
+                if (!_loaded)
+                {
+                    LoadState();
+                    _loaded = true;
+                }
+            }
         }
 
         public override string Name => "Direct HTTP";
 
-        public override DownloadProtocol Protocol => DownloadProtocol.Unknown;
+        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
 
         public override Task<string> Download(RemoteEpisode remoteEpisode, IIndexer indexer)
         {
-            // This is where the custom Indexer (separate piece, not in this
-            // file) is expected to have put a resolved-or-one-hop-away URL --
-            // see hls.py/main.py's get_server_embeds + _resolve_embed_to_stream
-            // for what "resolved" means today in the Python version.
             var sourceUrl = remoteEpisode.Release.DownloadUrl;
             var downloadId = Guid.NewGuid().ToString();
             var title = remoteEpisode.Release.Title;
-            var outputPath = BuildOutputPath(title);
+            var (downloadFolder, filePath) = BuildOutputPaths(title);
 
             var state = new DirectDownloadState
             {
                 DownloadId = downloadId,
                 Title = title,
-                OutputPath = outputPath,
+                DownloadFolder = downloadFolder,
+                FilePath = filePath,
                 Status = DownloadItemStatus.Queued,
                 Cts = new CancellationTokenSource(),
             };
             _items[downloadId] = state;
+            PersistState();
 
-            // Fire-and-forget: GetItems() (polled by Sonarr) reflects
-            // progress via the _items dictionary, same shape as scraper.py's
-            // ProgressFunction/progress_update_callback pattern.
             _ = Task.Run(() => RunDownloadAsync(state, sourceUrl, state.Cts.Token));
 
             return Task.FromResult(downloadId);
@@ -91,29 +98,67 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
         private async Task RunDownloadAsync(DirectDownloadState state, string sourceUrl, CancellationToken token)
         {
             state.Status = DownloadItemStatus.Downloading;
+            PersistState();
+
             try
             {
-                var resolvedUrl = await FinalizeDownloadUrlAsync(sourceUrl, token);
-
-                if (string.IsNullOrEmpty(resolvedUrl))
+                if (string.IsNullOrEmpty(sourceUrl))
                 {
-                    state.Status = DownloadItemStatus.Failed;
-                    state.Message = "Could not resolve a real, downloadable file URL (landing page only).";
-                    _logger.Warn("[{0}] {1}", state.Title, state.Message);
+                    Fail(state, "No download URL was provided.");
                     return;
                 }
 
-                _diskProvider.EnsureFolder(Path.GetDirectoryName(state.OutputPath));
+                _diskProvider.EnsureFolder(state.DownloadFolder);
 
-                // DownloadFileAsync already rejects text/html responses
-                // (throws HttpException) -- see HttpClient.DownloadFileAsync
-                // in NzbDrone.Common. That's the same safety net as
-                // main.py's _looks_like_real_file, already built in here.
-                await _httpClient.DownloadFileAsync(resolvedUrl, state.OutputPath, token);
+                // HEAD first so the queue has a real total to show progress
+                // against while the transfer runs (GetAsync below only
+                // returns once the whole body has streamed, so its
+                // ContentLength is too late for live progress).
+                try
+                {
+                    var head = await _httpClient.HeadAsync(new HttpRequest(sourceUrl) { AllowAutoRedirect = true }, token);
+                    if (head.Headers.ContentLength is { } length && length > 0)
+                    {
+                        state.TotalSize = length;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Debug(ex, "HEAD request for size failed for {0}", state.Title);
+                }
+
+                var partPath = state.FilePath + ".part";
+
+                await using (var fileStream = new FileStream(partPath, FileMode.Create, FileAccess.ReadWrite))
+                await using (var progressStream = new ProgressStream(fileStream, written => state.BytesDownloaded = written))
+                {
+                    var request = new HttpRequest(sourceUrl)
+                    {
+                        AllowAutoRedirect = true,
+                        ResponseStream = progressStream,
+                        RequestTimeout = TimeSpan.FromMinutes(30)
+                    };
+
+                    var response = await _httpClient.GetAsync(request, token);
+
+                    // Same safety net DownloadFileAsync has: a text/html body
+                    // is a landing/interstitial page, not the video.
+                    if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))
+                    {
+                        throw new HttpException(request, response, "Site responded with html content.");
+                    }
+                }
+
+                if (_diskProvider.FileExists(state.FilePath))
+                {
+                    _diskProvider.DeleteFile(state.FilePath);
+                }
+
+                _diskProvider.MoveFile(partPath, state.FilePath);
 
                 state.Status = DownloadItemStatus.Completed;
-                state.TotalSize = _diskProvider.GetFileSize(state.OutputPath);
-                _logger.Info("[{0}] Download completed -> {1}", state.Title, state.OutputPath);
+                state.BytesDownloaded = state.TotalSize = _diskProvider.GetFileSize(state.FilePath);
+                _logger.Info("[{0}] Download completed -> {1}", state.Title, state.FilePath);
             }
             catch (OperationCanceledException)
             {
@@ -126,120 +171,39 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                 state.Message = ex.Message;
                 _logger.Error(ex, "[{0}] Download failed", state.Title);
             }
-        }
-
-        // Port of main.py's _finalize_download_url / _resolve_mirrored_to_link
-        // / _resolve_mediafire_link / _looks_like_real_file, minus the final
-        // content-type check (DownloadFileAsync already does that).
-        private async Task<string> FinalizeDownloadUrlAsync(string url, CancellationToken token)
-        {
-            if (url.Contains("mediafire.com") && url.Contains("/file/"))
+            finally
             {
-                var resolved = await ResolveMediafireLinkAsync(url, token);
-                if (string.IsNullOrEmpty(resolved))
+                var partPath = state.FilePath + ".part";
+                if (_diskProvider.FileExists(partPath))
                 {
-                    return "";
+                    _diskProvider.DeleteFile(partPath);
                 }
 
-                url = resolved;
+                PersistState();
             }
-            else if (url.Contains("mirrored.to") && url.TrimEnd('/').EndsWith("_links"))
-            {
-                var resolved = await ResolveMirroredToLinkAsync(url, token);
-                if (string.IsNullOrEmpty(resolved))
-                {
-                    return "";
-                }
-
-                url = resolved;
-            }
-
-            if (url.Contains("mirrored.to") && url.Contains("dl=0"))
-            {
-                url = url.Replace("dl=0", "dl=1");
-            }
-
-            return url;
         }
 
-        private async Task<string> ResolveMediafireLinkAsync(string mediafireUrl, CancellationToken token)
+        private void Fail(DirectDownloadState state, string message)
         {
-            try
-            {
-                var html = await FetchHtmlAsync(mediafireUrl, token);
-                var button = html.QuerySelector("a#downloadButton[href], a.input.popsok[href]");
-                var href = button?.GetAttribute("href");
-                if (!string.IsNullOrEmpty(href) && href.StartsWith("http"))
-                {
-                    return href;
-                }
-
-                _logger.Debug("Mediafire page had no resolvable download button: {0}", mediafireUrl);
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Failed to resolve Mediafire link {0}", mediafireUrl);
-            }
-
-            return "";
+            state.Status = DownloadItemStatus.Failed;
+            state.Message = message;
+            _logger.Warn("[{0}] {1}", state.Title, message);
         }
 
-        private async Task<string> ResolveMirroredToLinkAsync(string landingUrl, CancellationToken token)
-        {
-            try
-            {
-                var html = await FetchHtmlAsync(landingUrl, token);
-                foreach (var a in html.QuerySelectorAll("a[href]"))
-                {
-                    var href = a.GetAttribute("href");
-                    if (string.IsNullOrEmpty(href) || !href.StartsWith("http"))
-                    {
-                        continue;
-                    }
-
-                    if (Regex.IsMatch(href, @"\.(mp4|mkv|avi|m4v)(\?|$)", RegexOptions.IgnoreCase))
-                    {
-                        return href;
-                    }
-
-                    if (href.Contains("mirrored.to") && href.Contains("/files/") && !href.TrimEnd('/').EndsWith("_links"))
-                    {
-                        return href;
-                    }
-                }
-
-                _logger.Debug("mirrored.to landing page had no resolvable file link: {0}", landingUrl);
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Failed to resolve mirrored.to link {0}", landingUrl);
-            }
-
-            return "";
-        }
-
-        private async Task<IDocument> FetchHtmlAsync(string url, CancellationToken token)
-        {
-            var request = new HttpRequest(url) { RequestTimeout = TimeSpan.FromSeconds(15) };
-            var response = await _httpClient.GetAsync(request, token);
-            var config = AngleSharp.Configuration.Default;
-            var context = BrowsingContext.New(config);
-            return await context.OpenAsync(req => req.Content(response.Content), token);
-        }
-
-        private string BuildOutputPath(string title)
+        private (string DownloadFolder, string FilePath) BuildOutputPaths(string title)
         {
             var safeTitle = string.Join("_", title.Split(Path.GetInvalidFileNameChars()));
-            var folder = Settings.DestinationDirectory;
+            var root = Settings.DestinationDirectory;
             if (!string.IsNullOrWhiteSpace(Settings.Category))
             {
-                folder = Path.Combine(folder, Settings.Category);
+                root = Path.Combine(root, Settings.Category);
             }
 
-            // Extension is a best guess until the real resolver (HLS vs
-            // direct mp4 vs mkv) runs -- fine for now since the vast
-            // majority of sources here are mp4.
-            return Path.Combine(folder, safeTitle + ".mp4");
+            var downloadFolder = Path.Combine(root, safeTitle);
+
+            // Extension is a best guess (the vast majority of sources are mp4);
+            // the HLS path, when it lands, will produce .mkv here instead.
+            return (downloadFolder, Path.Combine(downloadFolder, safeTitle + ".mp4"));
         }
 
         public override IEnumerable<DownloadClientItem> GetItems()
@@ -251,12 +215,15 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                     DownloadId = state.DownloadId,
                     Title = state.Title,
                     TotalSize = state.TotalSize,
-                    RemainingSize = state.Status == DownloadItemStatus.Completed ? 0 : state.TotalSize,
-                    OutputPath = new OsPath(state.OutputPath),
+                    RemainingSize = state.Status == DownloadItemStatus.Completed
+                        ? 0
+                        : Math.Max(0, state.TotalSize - state.BytesDownloaded),
+                    OutputPath = new OsPath(state.DownloadFolder),
                     Status = state.Status,
                     Message = state.Message,
                     CanMoveFiles = state.Status == DownloadItemStatus.Completed,
                     CanBeRemoved = true,
+                    DownloadClientInfo = DownloadClientItemClientInfo.FromDownloadClient(this, false),
                 };
             }
         }
@@ -265,7 +232,8 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
         {
             if (_items.TryRemove(item.DownloadId, out var state))
             {
-                state.Cts.Cancel();
+                state.Cts?.Cancel();
+                PersistState();
             }
 
             if (deleteData)
@@ -292,15 +260,107 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
             }
         }
 
+        private void PersistState()
+        {
+            lock (_persistLock)
+            {
+                try
+                {
+                    var snapshot = _items.Values.Select(PersistedDownload.From).ToList();
+                    _diskProvider.WriteAllText(_statePath, JsonSerializer.Serialize(snapshot));
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Failed to persist DirectHttp download queue");
+                }
+            }
+        }
+
+        private void LoadState()
+        {
+            try
+            {
+                if (!_diskProvider.FileExists(_statePath))
+                {
+                    return;
+                }
+
+                var snapshot = JsonSerializer.Deserialize<List<PersistedDownload>>(_diskProvider.ReadAllText(_statePath))
+                               ?? new List<PersistedDownload>();
+
+                _logger.Debug("DirectHttp: reloading {0} download(s) from persisted state", snapshot.Count);
+
+                foreach (var item in snapshot)
+                {
+                    var status = item.Status;
+
+                    // A download that was mid-flight when Sonarr stopped
+                    // can't be resumed -- but if the file is already fully on
+                    // disk, report it Completed so import still runs; else
+                    // mark it Failed rather than leaving it stuck.
+                    if (status is DownloadItemStatus.Downloading or DownloadItemStatus.Queued)
+                    {
+                        status = _diskProvider.FileExists(item.FilePath) && new FileInfo(item.FilePath).Length > 0
+                            ? DownloadItemStatus.Completed
+                            : DownloadItemStatus.Failed;
+                    }
+
+                    _items[item.DownloadId] = new DirectDownloadState
+                    {
+                        DownloadId = item.DownloadId,
+                        Title = item.Title,
+                        DownloadFolder = item.DownloadFolder,
+                        FilePath = item.FilePath,
+                        TotalSize = item.TotalSize,
+                        Status = status,
+                        Message = status == DownloadItemStatus.Failed && item.Status != DownloadItemStatus.Failed
+                            ? "Interrupted by a restart."
+                            : item.Message,
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Failed to load persisted DirectHttp download queue");
+            }
+        }
+
         private class DirectDownloadState
         {
             public string DownloadId { get; set; }
             public string Title { get; set; }
-            public string OutputPath { get; set; }
+            public string DownloadFolder { get; set; }
+            public string FilePath { get; set; }
+            public long BytesDownloaded { get; set; }
             public long TotalSize { get; set; }
             public DownloadItemStatus Status { get; set; }
             public string Message { get; set; }
             public CancellationTokenSource Cts { get; set; }
+        }
+
+        private class PersistedDownload
+        {
+            public string DownloadId { get; set; }
+            public string Title { get; set; }
+            public string DownloadFolder { get; set; }
+            public string FilePath { get; set; }
+            public long TotalSize { get; set; }
+            public DownloadItemStatus Status { get; set; }
+            public string Message { get; set; }
+
+            public static PersistedDownload From(DirectDownloadState state)
+            {
+                return new PersistedDownload
+                {
+                    DownloadId = state.DownloadId,
+                    Title = state.Title,
+                    DownloadFolder = state.DownloadFolder,
+                    FilePath = state.FilePath,
+                    TotalSize = state.TotalSize,
+                    Status = state.Status,
+                    Message = state.Message,
+                };
+            }
         }
     }
 }

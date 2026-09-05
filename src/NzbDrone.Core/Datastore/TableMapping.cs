@@ -175,6 +175,8 @@ namespace NzbDrone.Core.Datastore
             Mapper.Entity<ImportListExclusion>("ImportListExclusions").RegisterModel();
 
             Mapper.Entity<AutoTagging.AutoTag>("AutoTagging").RegisterModel();
+
+            Mapper.Entity<AnimeSite.SiteShow>("SiteShows").RegisterModel();
         }
 
         private static void RegisterMappers()

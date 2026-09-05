@@ -1,0 +1,142 @@
+.year {
+  font-weight: normal;
+  color: var(--disabledColor);
+}
+
+.layout {
+  display: flex;
+  gap: 20px;
+}
+
+.poster {
+  width: 180px;
+  height: 252px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.overview {
+  margin-bottom: 15px;
+  white-space: pre-line;
+}
+
+.downloadPanel {
+  margin-bottom: 15px;
+  padding: 10px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+}
+
+.rangeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rangeInput {
+  width: 70px;
+}
+
+.queuedNote {
+  margin-top: 8px;
+  color: var(--successColor);
+}
+
+.episodesHeader {
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.noEpisodes {
+  color: var(--disabledColor);
+}
+
+.episodeList {
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.episode {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.episodeNumber {
+  flex: 0 0 auto;
+  width: 30px;
+  color: var(--disabledColor);
+  text-align: right;
+}
+
+.episodeMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.episodeActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.releaseList {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--tableRowHoverBackgroundColor);
+  list-style: none;
+}
+
+.release {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.releaseTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryLink {
+  margin-right: auto;
+  color: var(--primaryColor);
+}
+
+.episodeProgress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.episodeProgressText {
+  flex: 0 0 auto;
+  color: var(--disabledColor);
+  font-size: 11px;
+  white-space: nowrap;
+}

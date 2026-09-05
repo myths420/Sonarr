@@ -23,6 +23,8 @@ import Quality from 'Settings/Quality/Quality';
 import Settings from 'Settings/Settings';
 import TagSettings from 'Settings/Tags/TagSettings';
 import UISettings from 'Settings/UI/UISettings';
+import SiteDownloadsPage from 'Sites/SiteDownloadsPage';
+import SitesPage from 'Sites/SitesPage';
 import Statistics from 'Statistics/Statistics';
 import Backups from 'System/Backup/Backups';
 import LogsTable from 'System/Events/LogsTable';
@@ -56,6 +58,14 @@ export function appRouteElements() {
       <Route path="/series/:titleSlug" element={<SeriesDetailsPage />} />
 
       <Route path="/statistics" element={<Statistics />} />
+
+      {/*
+        Sites
+      */}
+
+      <Route path="/sites" element={<SitesPage />} />
+      <Route path="/sites/downloads" element={<SiteDownloadsPage />} />
+      <Route path="/sites/:id" element={<SitesPage />} />
 
       {/*
         Calendar

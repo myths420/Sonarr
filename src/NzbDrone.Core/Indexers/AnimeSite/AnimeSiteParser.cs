@@ -1,48 +1,60 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Dom;
+using Jint;
 using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
-    // SCOPE OF THIS FILE (matches the phasing in DirectHttpDownloadClient):
-    // only the direct-download-link path (mediafire/mirrored.to/terabox) is
-    // implemented. If an episode page only has video-player embeds
-    // (Dailymotion/Rumble/gdriveplayer/etc, the hls.py path) this returns no
-    // results for it rather than a release that would fail to download --
-    // porting that embed-resolution logic is the next piece, not yet here.
-    //
-    // The episode-URL regex and the direct-download host list used to be
-    // hardcoded `static readonly` fields here -- they're now passed in from
-    // AnimeSiteSettings (via AnimeSiteIndexer), so a new "anime site"
-    // instance with a different URL scheme or host preferences doesn't need
-    // a code change, just different values in those two settings fields.
+    // Two ways to scrape a site, in priority order:
+    //   1. If AnimeSiteSettings.ScrapingScript is set, run that JavaScript
+    //      instead -- it fully controls series matching, episode matching,
+    //      and release extraction (quality/language filtering, landing-page
+    //      hops, anything) via the `host` bridge object (AnimeSiteScriptHost).
+    //      This is what makes a genuinely arbitrary site's logic editable
+    //      from Sonarr's settings UI, not just ones shaped like animexin.
+    //   2. Otherwise, fall back to the simpler selector-based fields
+    //      (SeriesLinkSelector/EpisodeLinkSelector/etc) below -- good enough
+    //      for a quick "same general shape as animexin" site without
+    //      writing a script at all.
+    // Release extraction itself (getReleases()/DownloadLinkSelector +
+    // LinkResolutionRules) lives in AnimeSiteReleaseResolver -- shared with
+    // the Sites catalogue's download panel, which needs the exact same
+    // "episode page -> real download link" logic but has no Series/Episode
+    // to search for.
     public class AnimeSiteParser : IParseIndexerResponse
     {
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly IAnimeSiteReleaseResolver _releaseResolver;
         private readonly Regex _episodeUrlRegex;
-        private readonly string[] _directDlHosts;
         private readonly string _seriesLinkSelector;
         private readonly string _episodeLinkSelector;
-        private readonly string _downloadLinkSelector;
+        private readonly AnimeSiteReleaseOptions _releaseOptions;
+        private readonly string _scrapingScript;
 
-        public AnimeSiteParser(IHttpClient httpClient, Logger logger, int absoluteEpisodeNumber, string seriesTitle, Regex episodeUrlRegex, string[] directDlHosts, string seriesLinkSelector, string episodeLinkSelector, string downloadLinkSelector)
+        public AnimeSiteParser(IHttpClient httpClient, Logger logger, IAnimeSiteReleaseResolver releaseResolver, int absoluteEpisodeNumber, string seriesTitle, Regex episodeUrlRegex, string[] directDlHosts, string seriesLinkSelector, string episodeLinkSelector, string downloadLinkSelector, List<LinkResolutionRule> resolutionRules, string scrapingScript)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _releaseResolver = releaseResolver;
             AbsoluteEpisodeNumber = absoluteEpisodeNumber;
             SeriesTitle = seriesTitle;
             _episodeUrlRegex = episodeUrlRegex;
-            _directDlHosts = directDlHosts;
             _seriesLinkSelector = seriesLinkSelector;
             _episodeLinkSelector = episodeLinkSelector;
-            _downloadLinkSelector = downloadLinkSelector;
+            _releaseOptions = new AnimeSiteReleaseOptions
+            {
+                DirectDownloadHosts = directDlHosts,
+                DownloadLinkSelector = downloadLinkSelector,
+                ResolutionRules = resolutionRules ?? new List<LinkResolutionRule>(),
+                ScrapingScript = scrapingScript
+            };
+            _scrapingScript = scrapingScript;
         }
 
         // Set by AnimeSiteIndexer right before each Fetch() call -- see the
@@ -54,6 +66,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
+            if (!string.IsNullOrWhiteSpace(_scrapingScript))
+            {
+                return ParseResponseViaScript(indexerResponse);
+            }
+
             var releases = new List<ReleaseInfo>();
 
             try
@@ -73,7 +90,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                     return releases;
                 }
 
-                releases.AddRange(ScrapeEpisodeDownloadLinks(episodeLink));
+                var episodeHtml = _httpClient.Get(new HttpRequest(episodeLink)).Content;
+                releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeLink, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeLink));
             }
             catch (Exception ex)
             {
@@ -81,6 +99,70 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
 
             return releases;
+        }
+
+        // Runs the configured JavaScript instead of the fixed selector
+        // pipeline. Script contract:
+        //   findSeriesUrl(searchHtml, seriesTitle) -> url string or ""
+        //   findEpisodeUrl(seriesHtml, episodeNumber) -> url string or ""
+        //   getReleases(episodeHtml, episodeUrl, seriesTitle, episodeNumber)
+        //       -> JSON.stringify()'d array of {title, url} -- see
+        //       AnimeSiteReleaseResolver for where this actually runs.
+        // Everything crossing the boundary is a plain string (host.get/
+        // select/selectOne all return strings, selects as JSON) -- see
+        // AnimeSiteScriptHost for why.
+        private IList<ReleaseInfo> ParseResponseViaScript(IndexerResponse indexerResponse)
+        {
+            var releases = new List<ReleaseInfo>();
+            var host = new AnimeSiteScriptHost(_httpClient, _logger);
+
+            try
+            {
+                var engine = new Engine(options => options.TimeoutInterval(TimeSpan.FromSeconds(30)));
+                engine.SetValue("host", host);
+                engine.Execute(_scrapingScript);
+
+                var seriesUrl = engine.Invoke("findSeriesUrl", indexerResponse.Content, SeriesTitle).AsString();
+                if (string.IsNullOrEmpty(seriesUrl))
+                {
+                    _logger.Debug("Scraping script found no series match for '{0}'", SeriesTitle);
+                    return releases;
+                }
+
+                var seriesHtml = host.Get(seriesUrl);
+                var episodeUrl = engine.Invoke("findEpisodeUrl", seriesHtml, AbsoluteEpisodeNumber).AsString();
+                if (string.IsNullOrEmpty(episodeUrl))
+                {
+                    _logger.Debug("Scraping script found no episode link for #{0}", AbsoluteEpisodeNumber);
+                    return releases;
+                }
+
+                var episodeHtml = host.Get(episodeUrl);
+                releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeUrl, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeUrl));
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Scraping script failed for {0}", SeriesTitle);
+            }
+
+            return releases;
+        }
+
+        private static IEnumerable<ReleaseInfo> ToReleaseInfo(IEnumerable<ResolvedRelease> resolved, string episodeUrl)
+        {
+            foreach (var release in resolved)
+            {
+                yield return new ReleaseInfo
+                {
+                    Guid = release.Url,
+                    Title = release.Title,
+                    DownloadUrl = release.Url,
+                    InfoUrl = episodeUrl,
+                    Size = 0,
+                    PublishDate = DateTime.UtcNow,
+                    DownloadProtocol = Indexers.DownloadProtocol.Torrent,
+                };
+            }
         }
 
         // Port of tracker.py's fetch_anime_obj: strip non-alphanumerics,
@@ -148,43 +230,6 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
 
             return null;
-        }
-
-        // Port of main.py's _extract_any_download_links: grab any link on
-        // the episode page pointing at a known direct-download host (host
-        // list from AnimeSiteSettings.DirectDownloadHosts, which elements
-        // are checked from AnimeSiteSettings.DownloadLinkSelector).
-        private IEnumerable<ReleaseInfo> ScrapeEpisodeDownloadLinks(string episodeLink)
-        {
-            var response = _httpClient.Get(new HttpRequest(episodeLink));
-            var doc = ParseHtml(response.Content);
-            var seen = new HashSet<string>();
-
-            foreach (var a in doc.QuerySelectorAll(_downloadLinkSelector))
-            {
-                var href = a.GetAttribute("href");
-                if (string.IsNullOrEmpty(href) || !href.StartsWith("http") || !seen.Add(href))
-                {
-                    continue;
-                }
-
-                if (!_directDlHosts.Any(host => href.Contains(host)))
-                {
-                    continue;
-                }
-
-                var host = _directDlHosts.First(h => href.Contains(h));
-                yield return new ReleaseInfo
-                {
-                    Guid = href,
-                    Title = $"{SeriesTitle} - Episode {AbsoluteEpisodeNumber:000} [{host}]",
-                    DownloadUrl = href,
-                    InfoUrl = episodeLink,
-                    Size = 0,
-                    PublishDate = DateTime.UtcNow,
-                    DownloadProtocol = Indexers.DownloadProtocol.Unknown,
-                };
-            }
         }
 
         private static IDocument ParseHtml(string html)

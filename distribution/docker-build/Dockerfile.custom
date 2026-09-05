@@ -1,8 +1,9 @@
-# Builds Sonarr directly from source (your fork), bypassing build.sh -- v5
-# dropped it. Uses the real commands from package.json and CONTRIBUTING.md
-# instead: yarn build for frontend, dotnet publish on Sonarr.Console for
-# backend, target framework net6.0 (per wiki.servarr.com/sonarr/contributing).
-FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
+# Builds Sonarr directly from source (your fork). Uses the exact same
+# backend build command the repo's own CI uses (confirmed working in
+# GitHub Actions logs) -- a plain `dotnet publish <single csproj>` on this
+# repo triggers StyleCop analyzer errors across the whole codebase that the
+# solution-level build + PublishAllRids target does not hit.
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 
 WORKDIR /src
 COPY . .
@@ -17,23 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
 RUN yarn install --frozen-lockfile
 RUN yarn build --env production
 
-# NOTE: exact csproj path is my best-confidence guess based on Sonarr's
-# established project layout (NzbDrone.Console historically houses the
-# Sonarr.Console startup project). If this path is wrong the build will
-# fail here with a clear "file not found" -- check src/ in your repo for
-# the real path and fix this line.
-RUN dotnet publish src/NzbDrone.Console/Sonarr.Console.csproj \
-    -c Release -r linux-x64 --self-contained false -o /app/publish
+RUN dotnet msbuild -restore src/Sonarr.sln \
+    -p:Configuration=Release -p:Platform=Posix -p:RuntimeIdentifiers=linux-x64 \
+    -t:PublishAllRids
 
-FROM mcr.microsoft.com/dotnet/aspnet:6.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
-COPY --from=build /app/publish .
+COPY --from=build /src/_output/net10.0/linux-x64/publish/ .
 COPY --from=build /src/_output/UI ./UI
 
 EXPOSE 8989
 VOLUME ["/config"]
 
 # NOTE: "Sonarr.dll" is a guess at the published output's entry assembly
-# name -- if this fails on start, check what .dll actually landed in
-# /app/publish above and fix this line to match.
+# name -- if this fails on start, check what .dll actually landed in the
+# copied publish folder above and fix this line to match.
 ENTRYPOINT ["dotnet", "Sonarr.dll", "-nobrowser", "-data=/config"]

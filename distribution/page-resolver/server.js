@@ -18,11 +18,11 @@
 //   -> 502 { "error": "...", "elapsedMs": N }
 
 const http = require('http');
-const { chromium } = require('playwright-extra');
-const stealth = require('puppeteer-extra-plugin-stealth')();
+// patchright = Playwright with the CDP runtime leaks patched out
+// (Runtime.enable, console API, closed shadow roots) that Cloudflare's
+// bot check fingerprints. Drop-in for playwright's chromium.
+const { chromium } = require('patchright');
 const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER, CAPTCHA_ENDPOINT } = require('./captcha');
-
-chromium.use(stealth);
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const NAV_TIMEOUT = parseInt(process.env.NAV_TIMEOUT_MS || '45000', 10);
@@ -39,14 +39,11 @@ const BLOCK_HOSTS = (process.env.BLOCK_HOSTS ||
 let browserPromise = null;
 function getBrowser() {
   if (!browserPromise) {
+    // patchright manages the automation-flag masking itself -- don't add
+    // --disable-blink-features=AutomationControlled or stealth plugins.
     browserPromise = chromium.launch({
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-features=IsolateOrigins,site-per-process',
-      ],
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
     });
   }
   return browserPromise;
@@ -139,12 +136,6 @@ async function resolve(opts) {
     viewport: { width: 1920, height: 1080 },
     screen: { width: 3840, height: 2160 },
     locale: 'en-US',
-  });
-
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-    if (!window.chrome) window.chrome = { runtime: {} };
   });
 
   await context.route('**/*', (route) => {

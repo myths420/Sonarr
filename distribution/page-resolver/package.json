@@ -1,15 +1,13 @@
 {
   "name": "animesite-page-resolver",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Headless-browser resolver for click-gated download pages (misterdonghua.in etc.)",
+  "description": "Headless-browser resolver for click-gated download pages (misterdonghua.in, vik1ngfile, ...)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "playwright-extra": "4.3.6",
-    "puppeteer-extra-plugin-stealth": "2.11.2",
-    "playwright": "1.48.2"
+    "patchright": "1.62.3"
   }
 }

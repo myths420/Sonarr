@@ -15,6 +15,11 @@ services:
     container_name: page-resolver
     restart: unless-stopped
     shm_size: 1gb          # Chromium crashes with the default 64 MB
+    # Cloudflare's challenge platform pulls from *.challenges.cloudflare.com
+    # subdomains mid-Turnstile; a flaky container resolver breaks the widget.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       - PORT=3000
       - NAV_TIMEOUT_MS=45000

@@ -1,21 +1,24 @@
 # Headless-browser resolver for click-gated download pages.
-# The Playwright image already ships the matching Chromium + all its libs.
+# Base = Playwright's image (Chromium + all its libs already installed).
+# We use patchright (a patched Playwright drop-in that removes the
+# runtime leaks Cloudflare fingerprints) with that same Chromium.
 FROM mcr.microsoft.com/playwright:v1.48.2-jammy
 
 ENV NODE_ENV=production \
     PORT=3000 \
-    NAV_TIMEOUT_MS=45000
+    NAV_TIMEOUT_MS=45000 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm install --omit=dev --no-audit --no-fund \
+    && npx patchright install chromium
 
 COPY server.js captcha.js ./
 
 EXPOSE 3000
 
-# Non-root user shipped by the Playwright image.
 USER pwuser
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

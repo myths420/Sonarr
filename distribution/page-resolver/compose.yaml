@@ -1,30 +1,30 @@
-# Dockge stack for the page-resolver service.
+# Dockge stack for page-resolver.
 #
-#   1. Put this folder (server.js, package.json, Dockerfile, compose.yaml)
-#      somewhere Dockge can see it, or paste this compose and point `build`
-#      at a checkout of the repo's distribution/page-resolver directory.
-#   2. Deploy the stack.
-#   3. In Sonarr: Settings > Indexers > <AnimeSite indexer> >
-#      Page Resolver URL = http://page-resolver:3000
-#      (if Sonarr is a separate stack, put both on the same external network
-#       or use http://<server-ip>:3000)
+# Nothing to copy -- this builds straight from the repo subfolder on
+# GitHub. Paste into a new Dockge stack and deploy. First deploy pulls a
+# Playwright/Chromium base image (~500 MB) once.
+#
+# Then in Sonarr: Settings > Indexers > <AnimeSite indexer> >
+#   Page Resolver URL = http://page-resolver:3000
+# (both on proxynet, so the container name resolves)
 
 services:
   page-resolver:
-    build: .
-    # Or, instead of build:, use a prebuilt image you push:
-    # image: your-registry/page-resolver:latest
+    build:
+      context: "https://github.com/myths420/Sonarr.git#animesite-sites-catalogue:distribution/page-resolver"
     container_name: page-resolver
     restart: unless-stopped
-    # Chromium needs more than the default 64 MB of /dev/shm.
-    shm_size: 1gb
-    ports:
-      - "3000:3000"
+    shm_size: 1gb          # Chromium crashes with the default 64 MB
     environment:
       - PORT=3000
       - NAV_TIMEOUT_MS=45000
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    ports:
+      - 3000:3000
+    networks:
+      - proxynet
+    labels:
+      - swag=enable
+
+networks:
+  proxynet:
+    external: true

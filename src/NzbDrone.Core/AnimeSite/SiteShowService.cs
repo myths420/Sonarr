@@ -591,7 +591,7 @@ namespace NzbDrone.Core.AnimeSite
 
                 try
                 {
-                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, false);
+                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, true);
                     if (series != null)
                     {
                         added++;

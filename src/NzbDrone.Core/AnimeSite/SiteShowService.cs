@@ -591,7 +591,7 @@ namespace NzbDrone.Core.AnimeSite
 
                 try
                 {
-                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, true);
+                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, message.SearchForMissingEpisodes);
                     if (series != null)
                     {
                         added++;

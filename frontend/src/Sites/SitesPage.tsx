@@ -6,6 +6,7 @@ import Alert from 'Components/Alert';
 import TextInput from 'Components/Form/TextInput';
 import Icon from 'Components/Icon';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import PageToolbar from 'Components/Page/Toolbar/PageToolbar';
@@ -92,9 +93,28 @@ function SitesPage() {
     executeCommand({ name: CommandNames.SiteShowSync, sourceListId });
   }, [executeCommand, sourceListId]);
 
+  const [isDownloadAllModalOpen, setIsDownloadAllModalOpen] = useState(false);
+
   const handleAddAllPress = useCallback(() => {
     executeCommand({ name: CommandNames.SiteAddAll, sourceListId });
   }, [executeCommand, sourceListId]);
+
+  const handleDownloadAllPress = useCallback(() => {
+    setIsDownloadAllModalOpen(true);
+  }, []);
+
+  const handleDownloadAllConfirmed = useCallback(() => {
+    setIsDownloadAllModalOpen(false);
+    executeCommand({
+      name: CommandNames.SiteAddAll,
+      sourceListId,
+      searchForMissingEpisodes: true,
+    });
+  }, [executeCommand, sourceListId]);
+
+  const handleDownloadAllCancel = useCallback(() => {
+    setIsDownloadAllModalOpen(false);
+  }, []);
 
   const handleSearchChange = useCallback(
     ({ value }: InputChanged<string>) => setTerm(value),
@@ -145,6 +165,14 @@ function SitesPage() {
             isSpinning={isAddingAll}
             isDisabled={shows.length === 0}
             onPress={handleAddAllPress}
+          />
+
+          <PageToolbarButton
+            label={translate('SitesDownloadAll')}
+            iconName={icons.DOWNLOAD}
+            isSpinning={isAddingAll}
+            isDisabled={shows.length === 0}
+            onPress={handleDownloadAllPress}
           />
         </PageToolbarSection>
       </PageToolbar>
@@ -218,6 +246,16 @@ function SitesPage() {
           </>
         ) : null}
       </PageContentBody>
+
+      <ConfirmModal
+        isOpen={isDownloadAllModalOpen}
+        kind={kinds.WARNING}
+        title={translate('SitesDownloadAll')}
+        message={translate('SitesDownloadAllConfirm', { count: shows.length })}
+        confirmLabel={translate('SitesDownloadAll')}
+        onConfirm={handleDownloadAllConfirmed}
+        onCancel={handleDownloadAllCancel}
+      />
     </PageContent>
   );
 }

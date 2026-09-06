@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using NLog;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaCover;
@@ -55,11 +57,13 @@ namespace NzbDrone.Core.MetadataSource.AniList
 
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly string _cacheFolder;
 
-        public AniListSeriesInfoProxy(IHttpClient httpClient, Logger logger)
+        public AniListSeriesInfoProxy(IHttpClient httpClient, IAppFolderInfo appFolderInfo, Logger logger)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _cacheFolder = Path.Combine(appFolderInfo.AppDataFolder, "anilist-cache");
         }
 
         public Tuple<Series, List<Episode>> GetSeriesInfo(int aniListId)
@@ -166,7 +170,22 @@ namespace NzbDrone.Core.MetadataSource.AniList
             request.SetContent(body);
             request.SuppressHttpError = true;
 
-            var response = _httpClient.Execute(request);
+            HttpResponse response = null;
+            try
+            {
+                response = _httpClient.Execute(request);
+            }
+            catch (Exception ex)
+            {
+                var cached = FromCache(aniListId, page);
+                if (cached == null)
+                {
+                    throw;
+                }
+
+                _logger.Warn(ex, "AniList request failed for {0} (page {1}); serving cached metadata", aniListId, page);
+                return cached;
+            }
 
             if ((int)response.StatusCode == 404)
             {
@@ -175,13 +194,66 @@ namespace NzbDrone.Core.MetadataSource.AniList
 
             if ((int)response.StatusCode >= 400)
             {
+                // AniList periodically 403s the whole API during outages.
+                // Serve the last-known-good copy so a Refresh doesn't wipe
+                // existing series and episode data.
+                var cached = FromCache(aniListId, page);
+                if (cached != null)
+                {
+                    _logger.Warn("AniList returned {0} for {1}; serving cached metadata", (int)response.StatusCode, aniListId);
+                    return cached;
+                }
+
                 throw new HttpException(request, response);
             }
 
             var envelope = JsonSerializer.Deserialize<AniListResponse>(response.Content,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            return envelope?.Data?.Media;
+            var media = envelope?.Data?.Media;
+            if (media != null)
+            {
+                ToCache(aniListId, page, response.Content);
+            }
+
+            return media;
+        }
+
+        private string CachePath(int aniListId, int page) => Path.Combine(_cacheFolder, $"{aniListId}-{page}.json");
+
+        private void ToCache(int aniListId, int page, string content)
+        {
+            try
+            {
+                Directory.CreateDirectory(_cacheFolder);
+                File.WriteAllText(CachePath(aniListId, page), content);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Failed to cache AniList response for {0}", aniListId);
+            }
+        }
+
+        private AniListMedia FromCache(int aniListId, int page)
+        {
+            try
+            {
+                var path = CachePath(aniListId, page);
+                if (!File.Exists(path))
+                {
+                    return null;
+                }
+
+                var envelope = JsonSerializer.Deserialize<AniListResponse>(File.ReadAllText(path),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                return envelope?.Data?.Media;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Failed to read cached AniList response for {0}", aniListId);
+                return null;
+            }
         }
 
         private static Series MapSeries(AniListMedia media)

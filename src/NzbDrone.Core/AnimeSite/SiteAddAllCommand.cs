@@ -15,6 +15,11 @@ namespace NzbDrone.Core.AnimeSite
         public string RootFolderPath { get; set; }
         public int? QualityProfileId { get; set; }
 
+        // When true, each added show also kicks off a missing-episode
+        // search ("Download All"); when false it is added to the library
+        // only ("Add All to Library").
+        public bool SearchForMissingEpisodes { get; set; }
+
         public override bool SendUpdatesToClient => true;
     }
 }

@@ -20,7 +20,7 @@
 const http = require('http');
 const { chromium } = require('playwright-extra');
 const stealth = require('puppeteer-extra-plugin-stealth')();
-const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER } = require('./captcha');
+const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER, CAPTCHA_ENDPOINT } = require('./captcha');
 
 chromium.use(stealth);
 
@@ -221,7 +221,11 @@ async function resolve(opts) {
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ status: 'ok', captcha: captchaEnabled() ? CAPTCHA_PROVIDER : false }));
+    return res.end(JSON.stringify({
+      status: 'ok',
+      captcha: captchaEnabled() ? CAPTCHA_PROVIDER : false,
+      captchaEndpoint: captchaEnabled() ? CAPTCHA_ENDPOINT : undefined,
+    }));
   }
   if (req.method !== 'POST' || req.url !== '/resolve') {
     res.writeHead(404);

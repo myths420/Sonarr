@@ -43,14 +43,20 @@ re-fires the flow):
 
 ```yaml
 environment:
-  - CAPTCHA_PROVIDER=capsolver   # or 2captcha
+  # CapSolver / 2captcha (JSON createTask API):
+  - CAPTCHA_PROVIDER=capsolver        # or: 2captcha
   - CAPTCHA_API_KEY=CAP-XXXXXXXX
+
+  # OR a cheap / free-tier 2captcha clone (azcaptcha, anycaptcha, ...)
+  # which use the old in.php / res.php form API:
+  # - CAPTCHA_PROVIDER=legacy
+  # - CAPTCHA_ENDPOINT=https://azcaptcha.com
+  # - CAPTCHA_API_KEY=your-key
 ```
 
-CapSolver and 2captcha both charge ~$0.5–1 per 1000 Turnstile solves.
-Without a key, a Turnstile page returns
-`502 {"error": "Turnstile present ... but no CAPTCHA_API_KEY configured"}`.
-`GET /health` shows whether a solver is active.
+`GET /health` → `{"status":"ok","captcha":"legacy","captchaEndpoint":"https://azcaptcha.com"}`
+when a solver is active. Without a key, a Turnstile page fails fast with
+`502 {"error":"Cloudflare Turnstile is gating this link ..."}`.
 
 ## Wire it into Sonarr
 

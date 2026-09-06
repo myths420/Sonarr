@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,11 +22,18 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         public AnimeSiteBrowserMode Mode { get; set; }
         public IndexerSessionConfig Session { get; set; }
 
+        // page-resolver service (distribution/page-resolver) -- a real
+        // headless browser that can click. For download pages that only
+        // hand over the link after a button press (misterdonghua.in).
+        public string PageResolverUrl { get; set; }
+
         public static readonly AnimeSiteFetchOptions Direct = new AnimeSiteFetchOptions();
 
         public bool UsesHeadless => Mode != AnimeSiteBrowserMode.Off && !string.IsNullOrWhiteSpace(HeadlessUrl);
 
         public bool UsesSession => Session is { IsConfigured: true };
+
+        public bool UsesResolver => !string.IsNullOrWhiteSpace(PageResolverUrl);
 
         public static AnimeSiteFetchOptions FromSettings(AnimeSiteSettings settings)
         {
@@ -33,9 +41,18 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             {
                 HeadlessUrl = settings.HeadlessBrowserUrl,
                 Mode = (AnimeSiteBrowserMode)settings.HeadlessBrowserMode,
-                Session = IndexerSessionConfig.FromSettings(settings)
+                Session = IndexerSessionConfig.FromSettings(settings),
+                PageResolverUrl = settings.PageResolverUrl
             };
         }
+    }
+
+    // A download link a page-resolver dug out by driving a real browser.
+    public class AnimeSiteResolvedLink
+    {
+        public string Link { get; set; } = string.Empty;
+        public string Filename { get; set; } = string.Empty;
+        public string Error { get; set; } = string.Empty;
     }
 
     // The result of a fetch: the page HTML plus the URL it actually ended
@@ -66,6 +83,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         // "give me the link" endpoint) has to run in the same browser
         // context that cleared the challenge.
         AnimeSitePage PostPage(string url, string postData, AnimeSiteFetchOptions fetch);
+
+        // Hands a URL to the page-resolver service (a real, click-capable
+        // headless browser) and gets back the download link it produced.
+        // Needs PageResolverUrl configured; otherwise returns an error.
+        AnimeSiteResolvedLink ResolvePage(string url, string clickText, string resultSelector, AnimeSiteFetchOptions fetch);
     }
 
     public class AnimeSiteFetcher : IAnimeSiteFetcher
@@ -188,6 +210,53 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             {
                 _logger.Debug(ex, "AnimeSite direct POST failed for {0}", url);
                 return new AnimeSitePage { FinalUrl = url };
+            }
+        }
+
+        public AnimeSiteResolvedLink ResolvePage(string url, string clickText, string resultSelector, AnimeSiteFetchOptions fetch)
+        {
+            fetch ??= AnimeSiteFetchOptions.Direct;
+
+            if (!fetch.UsesResolver)
+            {
+                return new AnimeSiteResolvedLink { Error = "No Page Resolver URL configured for this indexer." };
+            }
+
+            try
+            {
+                var payload = new Dictionary<string, object> { ["url"] = url, ["timeoutMs"] = 60000 };
+                if (!string.IsNullOrWhiteSpace(clickText))
+                {
+                    payload["clickText"] = clickText;
+                }
+
+                if (!string.IsNullOrWhiteSpace(resultSelector))
+                {
+                    payload["resultSelector"] = resultSelector;
+                }
+
+                var request = new HttpRequest(fetch.PageResolverUrl.TrimEnd('/') + "/resolve") { Method = HttpMethod.Post };
+                request.Headers.ContentType = "application/json";
+                request.Headers.Accept = "application/json";
+                request.SetContent(JsonSerializer.Serialize(payload));
+                request.RequestTimeout = TimeSpan.FromSeconds(90);
+                request.SuppressHttpError = true;
+
+                var response = _httpClient.Execute(request);
+                var result = JsonSerializer.Deserialize<AnimeSiteResolvedLink>(response.Content,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (result == null)
+                {
+                    return new AnimeSiteResolvedLink { Error = "Page resolver returned an empty response." };
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Page resolver ({0}) failed for {1}", fetch.PageResolverUrl, url);
+                return new AnimeSiteResolvedLink { Error = ex.Message };
             }
         }
 

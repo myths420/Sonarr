@@ -112,6 +112,45 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
+        // host.resolvePage(url[, clickText[, resultSelector]]) -> JSON
+        // {link, filename, error}. Drives the page-resolver service (a real
+        // headless browser that can click) -- for a download page that only
+        // reveals its link after a button press, e.g. misterdonghua.in's
+        // "Get Video". Needs "Page Resolver URL" set on the indexer.
+        public string ResolvePage(string url)
+        {
+            return ResolvePage(url, null, null);
+        }
+
+        public string ResolvePage(string url, string clickText)
+        {
+            return ResolvePage(url, clickText, null);
+        }
+
+        public string ResolvePage(string url, string clickText, string resultSelector)
+        {
+            try
+            {
+                var resolved = _fetcher.ResolvePage(url, clickText, resultSelector, _fetch);
+                if (!string.IsNullOrEmpty(resolved.Error))
+                {
+                    _logger.Warn("Scraping script host.resolvePage() for {0}: {1}", url, resolved.Error);
+                }
+
+                return JsonSerializer.Serialize(new
+                {
+                    link = resolved.Link ?? "",
+                    filename = resolved.Filename ?? "",
+                    error = resolved.Error ?? ""
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Scraping script host.resolvePage() failed for {0}", url);
+                return JsonSerializer.Serialize(new { link = "", filename = "", error = ex.Message });
+            }
+        }
+
         // host.select(html, cssSelector) -> JSON array of {text, href, title}
         // for every matching element (missing attributes come back as "").
         public string Select(string html, string selector)

@@ -212,6 +212,9 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         [FieldDefinition(16, Label = "Session User-Agent", Type = FieldType.Textbox, Advanced = true, HelpText = "The exact User-Agent string of the browser you copied the clearance cookie from (about:version / DevTools > navigator.userAgent). Cloudflare ties cf_clearance to the User-Agent, so a mismatch here fails with 403.")]
         public string SessionUserAgent { get; set; }
 
+        [FieldDefinition(17, Label = "Page Resolver URL", Type = FieldType.Textbox, Advanced = true, HelpText = "URL of a page-resolver instance (distribution/page-resolver) -- a real headless browser that can click. For download pages that only reveal their link after a button press, e.g. misterdonghua.in's \"Get Video\" (the download host behind LuciferDonghua). A Scraping Script reaches it with host.resolvePage(url). e.g. http://page-resolver:3000")]
+        public string PageResolverUrl { get; set; }
+
         // Parsed forms of the text fields above.
         public string[] GetDirectDownloadHostsArray()
         {

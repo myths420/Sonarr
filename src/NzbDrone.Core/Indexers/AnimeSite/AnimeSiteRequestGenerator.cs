@@ -9,16 +9,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         public IndexerPageableRequestChain GetRecentRequests()
         {
-            // No "recent releases" feed on these sites -- everything is
-            // search-driven (matches how tracker.py/main.py's search()
-            // works: you search a title, you don't browse a firehose).
+            // No RSS feed on these sites.
             return new IndexerPageableRequestChain();
         }
 
-        // Builds the search URL from Settings.SearchUrlPattern instead of a
-        // hardcoded "/?s=" scheme -- a site using a different search path
-        // (or query param name) just needs a different pattern here, not a
-        // code change.
+        // Search URL from Settings.SearchUrlPattern.
         private string BuildSearchUrl(string title)
         {
             var query = System.Uri.EscapeDataString(title);
@@ -41,9 +36,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return chain;
         }
 
-        // These sites are anime/donghua-only -- standard TV search types
-        // don't apply, so these all return empty chains rather than issuing
-        // requests that could never produce a useful result.
+        // Anime-only: no standard TV search types.
         public IndexerPageableRequestChain GetSearchRequests(SingleEpisodeSearchCriteria searchCriteria) => new();
         public IndexerPageableRequestChain GetSearchRequests(SeasonSearchCriteria searchCriteria) => new();
         public IndexerPageableRequestChain GetSearchRequests(DailyEpisodeSearchCriteria searchCriteria) => new();

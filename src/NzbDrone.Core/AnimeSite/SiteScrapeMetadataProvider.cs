@@ -8,12 +8,8 @@ using NzbDrone.Core.Indexers.AnimeSite;
 
 namespace NzbDrone.Core.AnimeSite
 {
-    // Fallback metadata: scrape the poster / synopsis / genres straight off
-    // the show's own page on the site. Lower quality than AniList (no
-    // reliable year, genres vary by theme) but it's always available and
-    // has no third-party dependency -- the important part, the poster,
-    // comes from the same page the catalogue was built from. Port of
-    // main.py's extract_anime_metadata.
+    // Fallback metadata: scrape poster / synopsis / genres from the show's
+    // own page on the site, used when AniList has no match.
     public interface ISiteScrapeMetadataProvider
     {
         ShowMetadata ScrapeFromPage(string showUrl, AnimeSiteFetchOptions fetch = null);

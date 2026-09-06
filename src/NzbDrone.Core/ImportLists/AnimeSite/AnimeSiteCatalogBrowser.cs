@@ -9,11 +9,7 @@ using NzbDrone.Core.Indexers.AnimeSite;
 
 namespace NzbDrone.Core.ImportLists.AnimeSite
 {
-    // One entry the catalogue browser found on a site -- a show name plus
-    // whatever identifiers the site (or a Scraping Script) could supply.
-    // Url is the show's own page on the site, kept around for anything that
-    // later needs to fetch it again (episode lists, posters, etc), not just
-    // AnimeSiteImportList's title-only use of this today.
+    // One show found by the catalogue script. Url is the show's page.
     public class AnimeSiteCatalogEntry
     {
         public string Title { get; set; }
@@ -24,8 +20,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
         public string ImdbId { get; set; }
     }
 
-    // One episode found on a show's own page, via listEpisodes() -- see
-    // AnimeSiteImportListSettings.DefaultScrapingScript for the contract.
+    // One episode found by the catalogue script's listEpisodes().
     public class AnimeSiteEpisodeEntry
     {
         public int Number { get; set; }
@@ -37,18 +32,10 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
     {
         List<AnimeSiteCatalogEntry> Browse(AnimeSiteCatalogueOptions options, Logger logger);
 
-        // Only supported when a Scraping Script is configured -- the show
-        // detail view (Sites catalogue) is a script-only feature for now,
-        // same as this class's non-script path never having grown episode
-        // support. Returns an empty list (not an exception) if no script is
-        // set, so callers can show "no episode data" rather than fail.
+        // Script-only. Returns an empty list if no catalogue script is set.
         List<AnimeSiteEpisodeEntry> BrowseEpisodes(AnimeSiteCatalogueOptions options, string showUrl, Logger logger);
     }
 
-    // Extracted out of AnimeSiteImportList so the same "walk the site and
-    // list every show" logic can be reused by anything that needs the raw
-    // catalogue (the import list's Fetch(), and the Sites catalogue browse
-    // feature) without duplicating the selector/script paths.
     public class AnimeSiteCatalogBrowser : IAnimeSiteCatalogBrowser
     {
         private readonly IAnimeSiteFetcher _fetcher;
@@ -65,9 +52,8 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
                 : BrowseViaScript(options, logger);
         }
 
-        // Built-in path: walk BrowsePathPattern pages until MaxPages or the
-        // first page that turns up no new links, pulling the show name from
-        // each matched link's title attribute (falling back to its text).
+        // Walk BrowsePathPattern pages, pulling show name from each matched
+        // link's title (or text). Stops at MaxPages or the first empty page.
         private List<AnimeSiteCatalogEntry> BrowseViaSelectors(AnimeSiteCatalogueOptions options, Logger logger)
         {
             var baseUrl = (options.BaseUrl ?? string.Empty).TrimEnd('/');
@@ -128,9 +114,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
             return shows;
         }
 
-        // Scripted path: mirrors AnimeSiteParser.ParseResponseViaScript --
-        // one Jint engine, `host` bound, everything crossing the JS boundary
-        // is a plain string, script returns JSON.stringify()'d results.
+        // Runs listShows() from the catalogue script.
         private List<AnimeSiteCatalogEntry> BrowseViaScript(AnimeSiteCatalogueOptions options, Logger logger)
         {
             var host = new AnimeSiteScriptHost(_fetcher, options.Fetch, logger);

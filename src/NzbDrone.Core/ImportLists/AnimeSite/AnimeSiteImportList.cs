@@ -11,10 +11,8 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.ImportLists.AnimeSite
 {
-    // Browses a scraper-driven anime/donghua site (animexin.dev and the like)
-    // for shows to surface on Sonarr's native Add Series > Discover screen.
-    // The actual "walk the site and list every show" work lives in
-    // AnimeSiteCatalogBrowser, shared with the Sites catalogue feature.
+    // Surfaces an AnimeSite catalogue on the native Add Series > Discover
+    // screen. Browse logic is in AnimeSiteCatalogBrowser.
     public class AnimeSiteImportList : ImportListBase<AnimeSiteImportListSettings>
     {
         private readonly IAnimeSiteCatalogBrowser _catalogBrowser;

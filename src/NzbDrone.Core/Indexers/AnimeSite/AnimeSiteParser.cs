@@ -9,22 +9,9 @@ using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
-    // Two ways to scrape a site, in priority order:
-    //   1. If AnimeSiteSettings.ScrapingScript is set, run that JavaScript
-    //      instead -- it fully controls series matching, episode matching,
-    //      and release extraction (quality/language filtering, landing-page
-    //      hops, anything) via the `host` bridge object (AnimeSiteScriptHost).
-    //      This is what makes a genuinely arbitrary site's logic editable
-    //      from Sonarr's settings UI, not just ones shaped like animexin.
-    //   2. Otherwise, fall back to the simpler selector-based fields
-    //      (SeriesLinkSelector/EpisodeLinkSelector/etc) below -- good enough
-    //      for a quick "same general shape as animexin" site without
-    //      writing a script at all.
-    // Release extraction itself (getReleases()/DownloadLinkSelector +
-    // LinkResolutionRules) lives in AnimeSiteReleaseResolver -- shared with
-    // the Sites catalogue's download panel, which needs the exact same
-    // "episode page -> real download link" logic but has no Series/Episode
-    // to search for.
+    // Parses an interactive search: run the Scraping Script if set,
+    // otherwise use the SeriesLinkSelector / EpisodeLinkSelector fields.
+    // Release extraction is delegated to AnimeSiteReleaseResolver.
     public class AnimeSiteParser : IParseIndexerResponse
     {
         private readonly IAnimeSiteFetcher _fetcher;
@@ -59,9 +46,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             _scrapingScript = scrapingScript;
         }
 
-        // Set by AnimeSiteIndexer right before each Fetch() call -- see the
-        // comment there for why this can't just come through ParseResponse's
-        // IndexerResponse parameter.
+        // Set by AnimeSiteIndexer before each Fetch() call.
         public int AbsoluteEpisodeNumber { get; set; }
 
         public string SeriesTitle { get; set; }
@@ -103,16 +88,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return releases;
         }
 
-        // Runs the configured JavaScript instead of the fixed selector
-        // pipeline. Script contract:
-        //   findSeriesUrl(searchHtml, seriesTitle) -> url string or ""
-        //   findEpisodeUrl(seriesHtml, episodeNumber) -> url string or ""
-        //   getReleases(episodeHtml, episodeUrl, seriesTitle, episodeNumber)
-        //       -> JSON.stringify()'d array of {title, url} -- see
-        //       AnimeSiteReleaseResolver for where this actually runs.
-        // Everything crossing the boundary is a plain string (host.get/
-        // select/selectOne all return strings, selects as JSON) -- see
-        // AnimeSiteScriptHost for why.
+        // Script contract:
+        //   findSeriesUrl(searchHtml, seriesTitle) -> url or ""
+        //   findEpisodeUrl(seriesHtml, episodeNumber) -> url or ""
+        //   getReleases(...) -> JSON array of {title, url}
         private IList<ReleaseInfo> ParseResponseViaScript(IndexerResponse indexerResponse)
         {
             var releases = new List<ReleaseInfo>();
@@ -167,12 +146,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
-        // Port of tracker.py's fetch_anime_obj: strip non-alphanumerics,
-        // lowercase, exact-compare. Real fuzzy matching (Levenshtein etc.)
-        // is deliberately not used here -- same reasoning as the Python
-        // version, an overly loose match risks grabbing the wrong series.
-        // Which elements are checked is controlled by
-        // AnimeSiteSettings.SeriesLinkSelector.
+        // Match a SeriesLinkSelector element by normalized (lowercase,
+        // alphanumerics-only) title equality.
         private string FindMatchingSeriesLink(IDocument doc, string title)
         {
             var target = StripTitle(title);
@@ -206,11 +181,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return cleaned;
         }
 
-        // URL scheme for finding an episode link is now driven by
-        // AnimeSiteSettings.EpisodeUrlPattern (default matches
-        // "...-episode-<N>-..." like animexin.dev/donghuaworld.com use);
-        // which elements are checked is controlled by
-        // AnimeSiteSettings.EpisodeLinkSelector.
+        // Finds the episode link matching EpisodeUrlPattern among the
+        // EpisodeLinkSelector elements.
         private string FindEpisodeLink(string animeLink, int absoluteEpisodeNumber)
         {
             var doc = ParseHtml(_fetcher.GetHtml(animeLink, null, _fetch));

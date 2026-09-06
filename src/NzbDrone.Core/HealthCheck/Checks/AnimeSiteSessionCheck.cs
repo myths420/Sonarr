@@ -7,10 +7,8 @@ using NzbDrone.Core.ThingiProvider.Events;
 
 namespace NzbDrone.Core.HealthCheck.Checks
 {
-    // Warns when an AnimeSite indexer's manually-pasted browser session
-    // (cf_clearance + User-Agent) has started coming back 403 -- i.e. the
-    // imported session has expired and needs re-pasting from the browser.
-    // Cleared automatically once a request with that session succeeds again.
+    // Warns when an AnimeSite indexer's configured session (cf_clearance +
+    // User-Agent) is returning 403. Cleared on the next success.
     [CheckOn(typeof(ProviderUpdatedEvent<IIndexer>))]
     [CheckOn(typeof(ProviderDeletedEvent<IIndexer>))]
     public class AnimeSiteSessionCheck : HealthCheckBase

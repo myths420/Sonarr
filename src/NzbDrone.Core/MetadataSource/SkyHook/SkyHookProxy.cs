@@ -50,16 +50,13 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
 
         public Tuple<Series, List<Episode>> GetSeriesInfo(int tvdbSeriesId)
         {
-            // AniList-backed series (this fork's anime/donghua additions that
-            // aren't on TheTVDB) carry a synthetic id -- serve those from
-            // AniList instead of hitting SkyHook with an id it won't know.
+            // AniList-backed series carry a synthetic id (see AniListSeriesIds).
             if (AniListSeriesIds.IsAniListId(tvdbSeriesId))
             {
                 return _aniListSeriesInfoProxy.GetSeriesInfo(AniListSeriesIds.ToAniListId(tvdbSeriesId));
             }
 
-            // Catalogue show with no AniList match -- built from the site's
-            // own title + scraped episode list.
+            // Catalogue show with no AniList match (see SiteSeriesIds).
             if (SiteSeriesIds.IsSiteId(tvdbSeriesId))
             {
                 return _siteScrapeSeriesInfoProxy.GetSeriesInfo(SiteSeriesIds.ToSiteShowId(tvdbSeriesId));

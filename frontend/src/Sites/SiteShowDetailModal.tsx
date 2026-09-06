@@ -35,8 +35,7 @@ interface EpisodeReleasesProps {
   onDownload: (episodeNumber: number, releaseUrl: string) => void;
 }
 
-// Expanded under an episode row when "Search" is pressed: the ranked list of
-// resolved releases, each with its own Download button.
+// The resolved releases for one episode, each with a Download button.
 function EpisodeReleases({
   showId,
   episodeNumber,
@@ -94,18 +93,14 @@ function EpisodeReleases({
   );
 }
 
-// Senpwai's "preview" screen: synopsis, episode list, and a download panel
-// (episode range -> Download). Per episode there's a Search (list resolved
-// releases) and a Download (grab the top pick). The picked release is ranked
-// server-side -- English audio/subs, highest quality, most reliable host
-// (see ISiteShowService.ResolveEpisodeReleases).
+// Show detail: synopsis, episode list, and per-episode Search / Download
+// plus a bulk episode-range download.
 function SiteShowDetailModal({
   isOpen,
   show: initialShow,
   onModalClose,
 }: SiteShowDetailModalProps) {
-  // Kept fresh while open so "Open in Sonarr" appears within a few seconds
-  // of a download starting (which auto-creates the series).
+  // Refetched while open so seriesId updates after a download auto-adds the series.
   const { data: freshShow } = useSiteShow(initialShow.id, isOpen);
   const show = freshShow ?? initialShow;
 

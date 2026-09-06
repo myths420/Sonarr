@@ -6,14 +6,8 @@ using NLog;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
-    // Drop-in DelegatingHandler that dumps the exact bytes going out and,
-    // on any non-success status, the full response body -- the place APIs
-    // put their "field X is required / invalid" detail for a 400/422.
-    //
-    // No-op unless the logger is at Trace level, so it can sit in the
-    // handler chain permanently at zero cost. Set the "AnimeSite" NLog
-    // rule to Trace (Settings > General > Log Level = Trace, or the
-    // logger-specific rule) to turn it on.
+    // DelegatingHandler that logs the outbound request at Trace level and
+    // the response body on any non-success status.
     public class LoggingHttpHandler : DelegatingHandler
     {
         private const int MaxBodyChars = 16000;
@@ -37,9 +31,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
-            // Always surface a failing body (not just at Trace) -- a 422's
-            // validation payload is the one thing you actually need, and it
-            // is small.
+            // A failing body is logged regardless of level (it carries the
+            // validation detail and is small).
             if (!response.IsSuccessStatusCode || trace)
             {
                 await LogResponseAsync(request, response, cancellationToken).ConfigureAwait(false);
@@ -55,7 +48,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             if (request.Content != null)
             {
-                // Buffer so the body can be both logged and still sent.
+                // Buffer so the body can be logged and still sent.
                 await request.Content.LoadIntoBufferAsync(token).ConfigureAwait(false);
                 body = await ReadSafeAsync(request.Content, token).ConfigureAwait(false);
             }
@@ -74,8 +67,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             try
             {
-                // ReadAsStringAsync buffers the content, so reading it here
-                // does not stop the caller reading it again afterwards.
+                // ReadAsStringAsync buffers, so the caller can still read it after.
                 body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
             }
             catch (Exception ex)

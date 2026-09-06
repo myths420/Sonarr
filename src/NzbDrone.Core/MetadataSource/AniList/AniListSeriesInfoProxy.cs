@@ -13,10 +13,9 @@ using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.MetadataSource.AniList
 {
-    // Serves Sonarr's Series/Episode shape from AniList's public GraphQL API
-    // for series this fork added by AniList id (see AniListSeriesIds). Stands
-    // in for SkyHook/TheTVDB on the add + refresh paths -- SkyHookProxy
-    // delegates here when it's handed a synthetic AniList id.
+    // Builds the Series/Episode shape from AniList's GraphQL API.
+    // SkyHookProxy.GetSeriesInfo delegates here for synthetic AniList ids
+    // (see AniListSeriesIds).
     public interface IAniListSeriesInfoProxy
     {
         Tuple<Series, List<Episode>> GetSeriesInfo(int aniListId);
@@ -195,9 +194,8 @@ namespace NzbDrone.Core.MetadataSource.AniList
                 };
             }
 
-            // AniList often exposes only a partial airing schedule (or none,
-            // for finished shows). Fill the gap up to the known/estimated
-            // episode count so the season isn't missing rows.
+            // Fill in any episodes the airing schedule didn't cover, up to
+            // the known/estimated count.
             var total = media.Episodes ?? 0;
             if (total == 0 && media.NextAiringEpisode?.Episode > 1)
             {

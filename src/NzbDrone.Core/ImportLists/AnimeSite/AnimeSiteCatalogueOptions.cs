@@ -2,11 +2,8 @@ using NzbDrone.Core.Indexers.AnimeSite;
 
 namespace NzbDrone.Core.ImportLists.AnimeSite
 {
-    // What the catalogue browser actually needs, decoupled from any one
-    // provider's settings class. The Sites catalogue is driven by the
-    // AnimeSite *indexer* (adding a site there is all it takes); the
-    // AnimeSiteImportList provider -- for people who also want native
-    // "Add Series" discovery -- can produce one of these too.
+    // Catalogue-browse settings, built from either an AnimeSite indexer or
+    // an AnimeSiteImportList.
     public class AnimeSiteCatalogueOptions
     {
         public string BaseUrl { get; set; }

@@ -2,17 +2,9 @@ using NzbDrone.Common.Http;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
-    // Scraper sites routinely serve a different page -- or a 403 -- to a
-    // client whose headers don't look like a browser's. Add the headers a
-    // desktop Chrome sends (same idea as the request headers the Python
-    // scraper this fork is based on used).
-    //
-    // Scope note: this only gets past passive header filtering. It does NOT
-    // solve an active Cloudflare "Just a moment" (IUAM) interstitial or a
-    // Turnstile challenge -- those need a real browser running the challenge
-    // JS (e.g. a FlareSolverr instance for IUAM; Turnstile isn't solvable by
-    // FlareSolverr either). Sonarr's HTTP layer also always prepends its own
-    // User-Agent, so this deliberately doesn't fight that.
+    // Adds the request headers a desktop Chrome sends, so a site that
+    // filters non-browser clients serves the normal page. Only gets past
+    // passive header checks, not an active Cloudflare challenge.
     public static class AnimeSiteHttp
     {
         public static HttpRequest BuildRequest(string url, string referer = null)

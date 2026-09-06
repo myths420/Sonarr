@@ -21,39 +21,25 @@ namespace NzbDrone.Core.AnimeSite
         List<SiteShow> GetForSourceList(int sourceListId);
         SiteShow Get(int id);
 
-        // Browses the site and upserts every show it finds (title/url only
-        // -- fast, one sync). Metadata (poster/overview/genres) is filled in
-        // separately by BackfillMetadata so a single sync can't get stuck
-        // making hundreds of AniList calls inline.
+        // Browses the site's catalogue script and upserts every show (title
+        // and url only). Metadata is filled in by BackfillMetadata.
         int SyncCatalogue(int sourceListId);
 
-        // Looks up metadata for up to `limit` poster-less shows on this
-        // list. `force` (manual Refresh) retries every one regardless of
-        // when it was last attempted; otherwise a failed lookup backs off a
-        // few days so a scheduled run doesn't hammer a dead metadata source.
+        // Looks up metadata for up to `limit` poster-less shows. `force`
+        // (manual Refresh) retries every one; a scheduled run backs a failed
+        // lookup off for a few days.
         int BackfillMetadata(int sourceListId, int limit, bool force = false);
 
-        // Fetched live (not cached) for the show detail view -- episode
-        // lists change as a show airs, and this is a single page fetch, not
-        // a whole-catalogue walk.
+        // Live episode list for the show detail view (single page fetch).
         List<AnimeSiteEpisodeEntry> GetEpisodes(int showId);
 
-        // Resolves real, directly-fetchable download link(s) for one
-        // episode. Borrows link-resolution settings (DirectDownloadHosts/
-        // LinkResolutionRules/ScrapingScript's getReleases()) from whichever
-        // AnimeSiteIndexer instance shares this show's site BaseUrl -- the
-        // Sites catalogue (an Import List) has no Series/Episode to search
-        // for, so it can never go through that indexer's own search path,
-        // but there is no reason to duplicate its settings just for this.
-        // Returns an empty list (not an exception) if no matching indexer is
-        // configured, or the requested episode number isn't found.
+        // Resolves download link(s) for one episode using the indexer's
+        // link-resolution settings. Returns an empty list if none resolve.
         List<ResolvedRelease> ResolveEpisodeReleases(int showId, int episodeNumber);
 
-        // Creates a real Sonarr Series for this catalogue show so it appears
-        // in the Series tab and gets Sonarr's monitoring / daily new-episode
-        // handling. Backed by AniList (not TheTVDB) via a synthetic id -- see
-        // AniListSeriesIds. Throws SiteSeriesAddException if the show has no
-        // AniList match (nothing to build episodes/air-dates from yet).
+        // Adds this catalogue show to the Series tab. AniList-backed when a
+        // match exists, otherwise built from the scraped episode list (see
+        // AniListSeriesIds / SiteSeriesIds).
         Series AddAsSeries(int showId, string rootFolderPath, int? qualityProfileId, bool searchForMissingEpisodes);
     }
 
@@ -179,9 +165,7 @@ namespace NzbDrone.Core.AnimeSite
             var take = limit > 0 ? limit : DefaultBackfillLimit;
             var retryBefore = DateTime.UtcNow.AddDays(-3);
 
-            // A show still needs metadata if it has no poster. On a scheduled
-            // run, back a failed lookup off for a few days rather than
-            // retrying it every time; a manual Refresh retries them all.
+            // Pending = no poster, and (force || not tried in the last few days).
             var pending = _repository.FindBySourceList(sourceListId)
                 .Where(s => string.IsNullOrEmpty(s.PosterUrl) &&
                             (force || s.LastSyncTime == default || s.LastSyncTime < retryBefore))
@@ -214,8 +198,7 @@ namespace NzbDrone.Core.AnimeSite
 
                 if (metadata != null)
                 {
-                    // Merge non-empty fields only, so a later run from a
-                    // better source can fill gaps without wiping what's there.
+                    // Merge non-empty fields only.
                     if (metadata.AniListId > 0)
                     {
                         show.AniListId = metadata.AniListId;
@@ -319,24 +302,16 @@ namespace NzbDrone.Core.AnimeSite
             var aniListId = show.AniListId;
             if (aniListId <= 0)
             {
-                // No id stored yet -- try a live lookup so the user doesn't
-                // have to wait for the next metadata backfill.
+                // Not backfilled yet; look it up now.
                 aniListId = _metadataProvider.Lookup(show.Title)?.AniListId ?? 0;
             }
 
-            // Prefer an AniList-backed series (real air dates, richer
-            // metadata); otherwise fall back to a series built from the
-            // site's own title + scraped episode list, so downloading from
-            // *any* catalogue show still lands it in the Series tab.
+            // AniList-backed when a match exists, otherwise scrape-backed.
             var syntheticId = aniListId > 0
                 ? AniListSeriesIds.FromAniListId(aniListId)
                 : SiteSeriesIds.FromSiteShowId(show.Id);
 
-            // Never add a second series for the same show. Check both
-            // synthetic id schemes (a show first added scrape-backed, then
-            // matched on AniList later, must resolve to the same series),
-            // the AniList id itself, and -- as a backstop against the
-            // add-from-folder screen -- an existing series folder.
+            // Idempotent across both id schemes and by cleaned title.
             var existing = FindExistingSeries(show, aniListId, syntheticId);
             if (existing != null)
             {
@@ -374,12 +349,8 @@ namespace NzbDrone.Core.AnimeSite
             return added;
         }
 
-        // If the show was downloaded before (files already on disk under a
-        // differently-cased folder), point the new series at that exact
-        // folder. Otherwise Sonarr -- case-sensitive on Linux even when the
-        // volume isn't -- treats the real folder as unmapped and the "add
-        // shows already downloaded" screen offers it again, ending up with
-        // two series over one folder.
+        // If a differently-cased folder for this show already exists on
+        // disk, point the series at that exact folder.
         private void AdoptExistingFolderCasing(Series series)
         {
             if (string.IsNullOrWhiteSpace(series.Path))
@@ -422,9 +393,8 @@ namespace NzbDrone.Core.AnimeSite
                 return byId;
             }
 
-            // Case-insensitive title match against an existing series folder
-            // name -- guards against a duplicate created via the "add shows
-            // already downloaded" screen when its folder casing differs.
+            // Cleaned-title match, so a hand-added / TheTVDB series for the
+            // same show is reused rather than duplicated.
             var slug = Parser.Parser.CleanSeriesTitle(show.Title ?? string.Empty);
             return string.IsNullOrEmpty(slug)
                 ? null
@@ -463,10 +433,8 @@ namespace NzbDrone.Core.AnimeSite
             return first.Id;
         }
 
-        // A "site" in the Sites section is exactly one AnimeSite indexer --
-        // SiteShow.SourceListId holds that indexer's id. Returns null if the
-        // indexer has since been deleted (its catalogue rows get cleaned up
-        // by the ProviderDeletedEvent handler below).
+        // SiteShow.SourceListId holds an AnimeSite indexer id. Null if the
+        // indexer has been deleted.
         private AnimeSiteSettings GetIndexerSettings(int indexerId)
         {
             var definition = _indexerFactory.All()
@@ -485,14 +453,11 @@ namespace NzbDrone.Core.AnimeSite
         {
             SyncCatalogue(message.SourceListId);
 
-            // A manual Refresh does a bigger batch and retries every
-            // poster-less show; the scheduled run stays small and backs off.
             var manual = message.Trigger == CommandTrigger.Manual;
             BackfillMetadata(message.SourceListId, manual ? 75 : DefaultBackfillLimit, manual);
         }
 
-        // Drop a site's whole catalogue when its AnimeSite indexer is
-        // deleted, so nothing lingers under Sites.
+        // Drop a site's catalogue rows when its indexer is deleted.
         public void HandleAsync(ProviderDeletedEvent<IIndexer> message)
         {
             _repository.DeleteMany(_repository.FindBySourceList(message.ProviderId));

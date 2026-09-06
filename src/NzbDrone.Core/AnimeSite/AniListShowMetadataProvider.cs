@@ -9,12 +9,8 @@ using NzbDrone.Common.Http;
 
 namespace NzbDrone.Core.AnimeSite
 {
-    // Best-effort poster/overview/genre lookup for a scraped show title.
-    // AniList's public GraphQL API needs no key and, unlike TVDB, actually
-    // carries the donghua/Chinese-anime catalogue this fork targets (see
-    // animexin-cloudflare notes -- verified against real titles). A show it
-    // doesn't recognize just keeps the bare title/url the catalogue browser
-    // found; SiteShowService still lists it.
+    // Poster / overview / genre lookup for a scraped show title, via
+    // AniList's public GraphQL API (no key required).
     public class ShowMetadata
     {
         public int AniListId { get; set; }
@@ -35,8 +31,7 @@ namespace NzbDrone.Core.AnimeSite
     {
         private const string Endpoint = "https://graphql.anilist.co";
 
-        // perPage:1 -- take AniList's own relevance ranking for the search
-        // term rather than trying to out-guess it with fuzzy matching here.
+        // perPage:1 -- take AniList's own top match for the term.
         private const string SearchQuery = @"
             query ($search: String) {
                 Page(page: 1, perPage: 1) {

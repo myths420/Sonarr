@@ -20,9 +20,7 @@ const useSiteShowEpisodes = (showId: number, enabled: boolean) => {
   };
 };
 
-// Resolved releases for one episode -- what "Search" on an episode row
-// fetches. Ranked server-side (English-preferred, highest quality, most
-// reliable host); the first entry is what a plain "Download" would grab.
+// Resolved releases for one episode, ranked; the first is the default pick.
 export const useEpisodeReleases = (
   showId: number,
   episodeNumber: number,

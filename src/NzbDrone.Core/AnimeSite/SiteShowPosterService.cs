@@ -9,14 +9,11 @@ namespace NzbDrone.Core.AnimeSite
 {
     public interface ISiteShowPosterService
     {
-        // Local path of the cached poster jpg for this show, downloading it
-        // from the metadata provider's URL on first request. Returns null if
-        // there's nothing to cache or the download failed -- caller should
-        // then just show a placeholder.
+        // Local path of the cached poster jpg, downloading it on first
+        // request. Null if there's nothing to cache or the download failed.
         string GetPosterPath(SiteShow show);
 
-        // Fire this after metadata backfill so the poster is already on disk
-        // by the time the catalogue is browsed.
+        // Downloads the poster now, if not already cached.
         void PreCache(SiteShow show);
     }
 
@@ -45,8 +42,7 @@ namespace NzbDrone.Core.AnimeSite
                 return null;
             }
 
-            // Key on AniList id where we have one (stable, shared across
-            // sites and re-syncs); otherwise fall back to the show id.
+            // Key on AniList id where present, else the show id.
             var key = show.AniListId > 0 ? "al" + show.AniListId : "sh" + show.Id;
             var path = Path.Combine(_cacheDir, key + ".jpg");
 
@@ -77,10 +73,8 @@ namespace NzbDrone.Core.AnimeSite
         {
             var partPath = path + ".part";
 
-            // Site-hosted posters (WordPress /wp-content/uploads/...) 403 a
-            // request with no Referer -- Cloudflare hotlink protection. Send
-            // the site's own origin as the Referer, same as a browser
-            // loading the image from a page on that site would.
+            // Send the site's own origin as the Referer -- site-hosted
+            // posters 403 a request without one (hotlink protection).
             var referer = url;
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {

@@ -18,7 +18,7 @@ namespace NzbDrone.Common
 
         public int GetHashCode(string obj)
         {
-            // Case-insensitive fork-wide -- see DiskProviderBase.PathStringComparison.
+            // Case-insensitive -- see DiskProviderBase.PathStringComparison.
             return obj.CleanFilePath().Normalize().ToLowerInvariant().GetHashCode();
         }
     }

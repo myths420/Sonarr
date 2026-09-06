@@ -14,8 +14,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
 
             RuleFor(c => c.MaxPages).GreaterThan(0).LessThanOrEqualTo(100);
 
-            // Only the built-in selector path needs the browse pattern and
-            // selector -- a Scraping Script does its own paging/fetching.
+            // Selector path only; a Scraping Script does its own paging.
             RuleFor(c => c.BrowsePathPattern).NotEmpty()
                 .WithMessage("'Browse Path Pattern' must not be empty.")
                 .When(c => string.IsNullOrWhiteSpace(c.ScrapingScript));
@@ -64,23 +63,14 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
         }
     }
 
-    // One instance of this import list = one website to browse for shows to
-    // add via Sonarr's native "Add Series" discovery screen. Same two-mode
-    // design as AnimeSiteIndexer/AnimeSiteParser:
-    //   1. Scraping Script set -> that JavaScript fully controls how the site
-    //      is paged and which shows come back (listShows(baseUrl, maxPages)).
-    //   2. Otherwise -> walk BrowsePathPattern pages 1..MaxPages and pull
-    //      show titles out with SeriesLinkSelector.
-    // Only Title is really carried across -- posters/overviews come from
-    // Sonarr's own metadata lookup once a title resolves to a real series.
+    // One instance = one website to browse for the native Add Series screen.
+    // With a Scraping Script, that JavaScript pages the site; otherwise the
+    // BrowsePathPattern + SeriesLinkSelector fields are used.
     public class AnimeSiteImportListSettings : ImportListSettingsBase<AnimeSiteImportListSettings>
     {
-        // animexin.dev puts Cloudflare's JS challenge in front of the
-        // /anime/ listing pages but NOT in front of its Yoast sitemap, so the
-        // default browse strategy reads /anime-sitemap.xml (one request, the
-        // whole catalogue) and derives each show's name from its URL slug.
-        // Swap in the selector fields (clear this script) for a site whose
-        // listing pages are reachable directly.
+        // Default: read the Yoast /anime-sitemap.xml and derive each show's
+        // name from its URL slug. Falls back to the <a href> links when a
+        // headless browser returns the sitemap rendered as HTML.
         public const string DefaultScrapingScript = @"function listShows(baseUrl, maxPages) {
   var xml = host.get(baseUrl + '/anime-sitemap.xml');
   var out = [];
@@ -92,9 +82,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
   var re = /<loc>\s*([^<]+?)\s*<\/loc>/g, m;
   while ((m = re.exec(xml)) !== null) { urls.push(m[1]); }
 
-  // A headless browser (FlareSolverr) hands the sitemap back already
-  // rendered by its XSL stylesheet -- an HTML table, no <loc> tags. Fall
-  // back to the <a href> links in that table.
+  // Headless browsers return the sitemap rendered as an HTML table.
   if (urls.length === 0) {
     var links = JSON.parse(host.select(xml, 'a[href]'));
     for (var j = 0; j < links.length; j++) {
@@ -104,8 +92,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
 
   for (var i = 0; i < urls.length; i++) {
     var url = urls[i];
-    // Take the last path segment as the slug -- handles both /{slug}/
-    // (animexin) and /anime/{slug}/ (donghuastream, etc).
+    // Last path segment = slug; handles /{slug}/ and /anime/{slug}/.
     var pm = url.match(/^https?:\/\/[^\/]+\/(.+?)\/?$/);
     if (!pm) { continue; }
     var segs = pm[1].split('/');
@@ -123,12 +110,8 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
   return JSON.stringify(out);
 }
 
-// Used by the Sites catalogue's show detail view -- host.select(html, sel)
-// already returns each link's own text/title, so numbering just needs a
-// digit to key off. '.eplister a' is the WordPress anime-theme convention
-// this site (and most that share its theme) use for a show page's episode
-// list; falls back to scanning every link with '-episode-<N>-' in its href
-// if the theme selector finds nothing.
+// Episode list for the show detail view. '.eplister a' is the common
+// WordPress anime-theme selector; falls back to any '-episode-<N>-' link.
 function listEpisodes(showHtml, showUrl) {
   var byNumber = {};
   var links = JSON.parse(host.select(showHtml, '.eplister a'));
@@ -146,9 +129,7 @@ function listEpisodes(showHtml, showUrl) {
     var isSpecial = link.href.indexOf('-special') !== -1;
     var existing = byNumber[number];
 
-    // A show page often lists a numbered episode twice -- once plain, once
-    // as a -special- variant (a recap/extended cut sharing that number).
-    // Keep the plain one; only fall back to the special if that's all there is.
+    // Prefer the plain entry over a -special- variant with the same number.
     if (existing && !(existing.isSpecial && !isSpecial)) { continue; }
 
     byNumber[number] = {

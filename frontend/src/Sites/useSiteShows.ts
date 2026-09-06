@@ -3,9 +3,7 @@ import SiteShow from './SiteShow';
 
 const DEFAULT_SHOWS: SiteShow[] = [];
 
-// One catalogue show, kept fresh while its detail modal is open -- picks
-// up seriesId/seriesTitleSlug within a few seconds of a download starting
-// (which auto-creates the Sonarr series).
+// One catalogue show, polled while `enabled` (the detail modal is open).
 export const useSiteShow = (showId: number, enabled: boolean) => {
   return useApiQuery<SiteShow>({
     path: `/siteshow/${showId}`,

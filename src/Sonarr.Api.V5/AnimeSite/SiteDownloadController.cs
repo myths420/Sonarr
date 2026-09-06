@@ -4,9 +4,7 @@ using Sonarr.Http;
 
 namespace Sonarr.Api.V5.AnimeSite;
 
-// In-memory download tracker for the Sites catalogue -- separate from
-// Sonarr's own queue/history since these downloads have no Series/Episode
-// library entry behind them. See SiteDownloadService.
+// Read/cancel access to the Sites-catalogue download tracker.
 [V5ApiController("sitedownload")]
 public class SiteDownloadController : Controller
 {

@@ -6,10 +6,7 @@ using System.Threading.Tasks;
 namespace NzbDrone.Core.Download
 {
     // Pass-through write stream that reports the running byte total to a
-    // callback after each write. IHttpClient streams a response body
-    // straight into HttpRequest.ResponseStream, so wrapping the file stream
-    // in this is the only way to observe an in-progress download's size --
-    // used by the in-process download clients/services (DirectHttp, Sites).
+    // callback after each write, for live download progress.
     public sealed class ProgressStream : Stream
     {
         private readonly Stream _inner;

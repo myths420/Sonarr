@@ -1,8 +1,7 @@
 namespace Sonarr.Api.V5.AnimeSite;
 
-// POST body. TokenValue may be the bare cf_clearance value or the whole
-// pasted "cf_clearance=...; __cf_bm=..." cookie string -- only cf_clearance
-// is used (IndexerSessionConfig strips the rest on read).
+// POST body. TokenValue: the bare cf_clearance value or a full
+// "cf_clearance=...; __cf_bm=..." cookie string.
 public class UpdateSessionRequest
 {
     public string? TargetDomain { get; set; }

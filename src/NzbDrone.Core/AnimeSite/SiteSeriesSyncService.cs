@@ -12,8 +12,7 @@ namespace NzbDrone.Core.AnimeSite
 {
     public class SiteSeriesSyncService : IExecute<SiteSeriesSyncCommand>
     {
-        // Don't re-search an episode we tried recently -- the release may
-        // simply not be posted on the site yet.
+        // Per-episode re-search cooldown.
         private static readonly TimeSpan SearchCooldown = TimeSpan.FromHours(6);
 
         private readonly ISeriesService _seriesService;
@@ -46,8 +45,6 @@ namespace NzbDrone.Core.AnimeSite
 
             var seriesIds = aniListSeries.Select(s => s.Id).ToList();
 
-            // Pull in episodes that have aired since the last run (new
-            // AniList airing-schedule entries become Episode rows here).
             _commandQueueManager.Push(new RefreshSeriesCommand(seriesIds), trigger: CommandTrigger.Scheduled);
 
             var now = DateTime.UtcNow;

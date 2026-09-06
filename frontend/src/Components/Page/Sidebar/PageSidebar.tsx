@@ -252,8 +252,7 @@ function PageSidebar() {
 
   const { data: sites } = useSites();
 
-  // The "Sites" entry lists one child per configured AnimeSite instance
-  // (each site has its own catalogue), then the shared Downloads view.
+  // One child per configured site under the "Sites" entry, plus Downloads.
   const links = useMemo<SidebarItem[]>(() => {
     if (sites.length === 0) {
       return LINKS;

@@ -7,19 +7,9 @@ using NLog;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
-    // Exposed to the per-indexer JavaScript scraping script (AnimeSiteSettings.
-    // ScrapingScript) as the global `host` object. This is what gives a
-    // script full "write your own scraper" power -- fetch any page, run any
-    // CSS selector against it -- matching what the original Python version
-    // (requests + BeautifulSoup) could do, without needing a real browser.
-    //
-    // Every method here only ever passes plain strings across the JS/C#
-    // boundary (HTML in, JSON out) rather than trying to hand JS a live
-    // .NET object graph -- CLR-object interop shape/behavior varies between
-    // scripting-engine versions, but string marshalling and JSON.parse/
-    // JSON.stringify are basic, stable JavaScript, so this is the most
-    // dependable boundary to build on. Scripts call JSON.parse() on
-    // host.select()/host.selectOne()'s return value.
+    // The global `host` object exposed to the per-indexer Scraping Script
+    // and Catalogue Script. Every method takes and returns plain strings
+    // (HTML in, JSON out); scripts JSON.parse() the select* results.
     public class AnimeSiteScriptHost
     {
         private readonly IAnimeSiteFetcher _fetcher;
@@ -33,8 +23,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             _logger = logger;
         }
 
-        // host.get(url) -> raw HTML string of that page (or "" on failure).
-        // Routes through the site's headless-browser option when configured.
+        // host.get(url) -> page HTML, or "" on failure. Uses the site's
+        // headless-browser / session options when configured.
         public string Get(string url)
         {
             try
@@ -48,11 +38,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
-        // host.select(html, cssSelector) -> JSON array string of
-        // {text, href, title} for every matching element. href/title are ""
-        // for elements without that attribute. title is included because
-        // listing-page thumbnails are often <a title="Show Name"><img></a>
-        // with no usable text content.
+        // host.select(html, cssSelector) -> JSON array of {text, href, title}
+        // for every matching element (missing attributes come back as "").
         public string Select(string html, string selector)
         {
             var results = new List<ScriptElement>();
@@ -72,13 +59,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return JsonSerializer.Serialize(results);
         }
 
-        // host.selectHtml(html, cssSelector) -> JSON array of the outer HTML
-        // of every matching element, as strings. Lets a script pull out a
-        // repeated block (e.g. one per quality/language on a download page)
-        // and then run host.select/selectOne again against just that block's
-        // HTML to read its own nested label/links -- host.select() alone
-        // only returns flat {text,href,title} per element, with no way to
-        // keep a block's children grouped together.
+        // host.selectHtml(html, cssSelector) -> JSON array of each matching
+        // element's outer HTML, for re-running host.select against a block.
         public string SelectHtml(string html, string selector)
         {
             var results = new List<string>();
@@ -121,8 +103,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
-        // host.log(message) -- writes to Sonarr's debug log, for
-        // troubleshooting a script directly from Settings > System > Logs.
+        // host.log(message) -> writes to the debug log.
         public void Log(string message)
         {
             _logger.Debug("[Scraping script] {0}", message);

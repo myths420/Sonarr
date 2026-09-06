@@ -14,10 +14,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         Always = 2
     }
 
-    // How AnimeSite page fetches should be done for one site. Built from
-    // AnimeSiteSettings and carried alongside the other *Options types so
-    // every fetch point (catalogue browse, episode/landing pages, the
-    // scraping script's host.get) can honour it.
+    // Per-site fetch settings, built from AnimeSiteSettings.
     public class AnimeSiteFetchOptions
     {
         public string HeadlessUrl { get; set; }
@@ -41,10 +38,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         }
     }
 
-    // Fetches a page's HTML, optionally through a headless browser
-    // (FlareSolverr) so Cloudflare's "Just a moment" interstitial and other
-    // JS-gated pages can be read. FlareSolverr can't solve a Turnstile
-    // captcha (e.g. vikingfile's download gate) -- that still needs a human.
+    // Fetches page HTML, optionally through a FlareSolverr-compatible
+    // headless browser (Headless Browser URL setting).
     public interface IAnimeSiteFetcher
     {
         string GetHtml(string url, string referer, AnimeSiteFetchOptions fetch);
@@ -85,9 +80,6 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         private string Direct(string url, string referer, AnimeSiteFetchOptions fetch)
         {
-            // A manually-synchronised browser session (pasted cf_clearance +
-            // User-Agent) needs its own HttpClient -- Sonarr's shared one
-            // can't send an un-prefixed User-Agent.
             if (fetch.UsesSession)
             {
                 try
@@ -96,7 +88,6 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 }
                 catch (AnimeSiteSessionExpiredException)
                 {
-                    // Already logged + recorded for the health check.
                     return string.Empty;
                 }
             }
@@ -107,8 +98,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
             catch (HttpException ex)
             {
-                // A 403/503 body is still useful -- Auto mode inspects it to
-                // decide whether to fall back to the headless browser.
+                // Keep the error body; Auto mode inspects it for challenge markers.
                 return ex.Response?.Content ?? string.Empty;
             }
             catch (Exception ex)
@@ -154,9 +144,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
-        // Markers a Cloudflare IUAM / challenge page carries but a real page
-        // doesn't. Kept deliberately narrow to avoid false positives on
-        // pages that merely mention Cloudflare.
+        // Cloudflare challenge-page markers.
         private static bool LooksBlocked(string html)
         {
             if (string.IsNullOrWhiteSpace(html) || html.Length > 60000)

@@ -4,9 +4,7 @@ import Site from './Site';
 
 const DEFAULT_SITES: Site[] = [];
 
-// A "site" is exactly one AnimeSite indexer -- add one under
-// Settings > Indexers and it shows up here; delete it and it's gone.
-// Nothing is preconfigured.
+// The configured indexers, filtered to AnimeSite instances.
 const useSites = () => {
   const result = useApiQuery<Site[]>({
     path: '/indexer',

@@ -1,7 +1,6 @@
 import ModelBase from 'App/ModelBase';
 
-// Mirrors Sonarr.Api.V3.AnimeSite.SiteShowResource -- deliberately not
-// TVDB-shaped, see src/NzbDrone.Core/AnimeSite/SiteShow.cs.
+// Mirrors Sonarr.Api.V5.AnimeSite.SiteShowResource.
 export interface SiteShow extends ModelBase {
   sourceListId: number;
   slug: string;

@@ -18,12 +18,8 @@ namespace NzbDrone.Core.AnimeSite
 {
     public interface ISiteDownloadService
     {
-        // Resolves releases for the given episode (same ranking as
-        // ISiteShowService.ResolveEpisodeReleases -- English-preferred,
-        // highest quality first) and starts downloading the top pick.
-        // Returns null if no release could be resolved at all. Pass
-        // releaseUrl to download a specific resolved release rather than the
-        // top-ranked pick.
+        // Resolves releases for the episode and downloads the top pick, or
+        // the one matching releaseUrl. Returns null if nothing resolved.
         SiteDownload StartDownload(int showId, int episodeNumber, string releaseUrl = null);
 
         List<SiteDownload> GetDownloads();
@@ -33,10 +29,7 @@ namespace NzbDrone.Core.AnimeSite
 
     public class SiteDownloadService : ISiteDownloadService
     {
-        // Static, like DirectHttpDownloadClient's own _items -- both are
-        // in-memory-only download trackers, and there is exactly one of
-        // each kind of tracker per running Sonarr process regardless of how
-        // many times this service gets constructed by DI.
+        // One tracker per process, regardless of DI lifetime.
         private static readonly ConcurrentDictionary<string, SiteDownload> _downloads = new();
 
         private readonly ISiteShowService _siteShowService;
@@ -79,17 +72,14 @@ namespace NzbDrone.Core.AnimeSite
             var show = _siteShowRepository.Get(showId);
             var destinationRoot = _rootFolderService.All().FirstOrDefault()?.Path ?? Path.GetTempPath();
 
-            // Downloading anything from a show pulls it into the Series tab:
-            // auto-create the (AniList-backed) series so the file lands in
-            // its folder and Sonarr imports/tracks it on the rescan below.
+            // Auto-create the series so the file lands in its folder and the
+            // post-download rescan imports it.
             var series = TryEnsureSeries(showId);
 
             string outputPath;
             if (series != null && !string.IsNullOrWhiteSpace(series.Path))
             {
-                // Drop it straight in the series folder with a name Sonarr's
-                // parser can match; the post-download rescan renames it into
-                // the season folder per the user's naming config.
+                // Parseable name; the rescan renames it into the season folder.
                 var fileName = FileNameSafe($"{series.Title} - S01E{episodeNumber:00} - Episode {episodeNumber}") + ".mp4";
                 outputPath = Path.Combine(series.Path, fileName);
             }
@@ -136,12 +126,8 @@ namespace NzbDrone.Core.AnimeSite
             return true;
         }
 
-        // Streams the file ourselves (rather than IHttpClient.DownloadFileAsync)
-        // so byte progress can be reported live -- the Sites downloads view
-        // wants a real percentage/speed, not just a spinner that flips to
-        // "done". Keeps DownloadFileAsync's own safeguards: .part file until
-        // complete, and reject a text/html response (a landing page that
-        // slipped through release resolution) instead of saving it as video.
+        // Streamed download with live byte progress. Writes to a .part file
+        // until complete and rejects a text/html response (a landing page).
         private async Task RunDownloadAsync(SiteDownload download, string sourceUrl, CancellationToken token)
         {
             var partPath = download.OutputPath + ".part";
@@ -152,12 +138,8 @@ namespace NzbDrone.Core.AnimeSite
             {
                 _diskProvider.EnsureFolder(Path.GetDirectoryName(download.OutputPath));
 
-                // Best-effort size up front (via HEAD) so the progress bar
-                // has a total to fill against while the download runs -- the
-                // GetAsync below only returns once the body has fully
-                // streamed, so its ContentLength arrives too late to use for
-                // live progress. Hosts that don't answer HEAD just leave the
-                // bar indeterminate; the byte counter and speed still work.
+                // Size up front via HEAD so the progress bar has a total
+                // (GetAsync only returns once the body has fully streamed).
                 try
                 {
                     var headResponse = await _httpClient.HeadAsync(new HttpRequest(sourceUrl) { AllowAutoRedirect = true }, token);
@@ -189,8 +171,8 @@ namespace NzbDrone.Core.AnimeSite
                         var isCaptchaHost = host.Contains("vikingfile") || host.Contains("vik1ngfile");
 
                         throw new HttpException(request, response, isCaptchaHost
-                            ? $"{host} serves the file behind a captcha and can't be downloaded automatically -- open the link in a browser, solve it, download the file yourself and drop it in the series folder (a rescan will import it)."
-                            : "The download link returned a web page, not a file -- the release probably needs a landing-page resolution rule this indexer doesn't have.");
+                            ? $"{host} serves the file behind a captcha. Open the link in a browser, download the file, and drop it in the series folder; a rescan will import it."
+                            : "The download link returned a web page, not a file. The release likely needs a Link Resolution Rule this indexer doesn't have.");
                     }
 
                     if (download.TotalSize == 0)
@@ -213,9 +195,6 @@ namespace NzbDrone.Core.AnimeSite
 
                 if (download.SeriesId.HasValue)
                 {
-                    // Let Sonarr import the file we just dropped in the
-                    // series folder: rename into the season folder, create
-                    // the EpisodeFile, mark the episode hasFile.
                     _commandQueueManager.Push(new RescanSeriesCommand(download.SeriesId.Value));
                 }
             }
@@ -249,8 +228,6 @@ namespace NzbDrone.Core.AnimeSite
             }
             catch (SiteSeriesAddException ex)
             {
-                // No AniList match yet -- fall back to the plain per-show
-                // folder; the file still downloads, it just isn't tracked.
                 _logger.Debug("Auto-add to Series tab skipped for site show {0}: {1}", showId, ex.Message);
                 return null;
             }
@@ -266,8 +243,7 @@ namespace NzbDrone.Core.AnimeSite
             return string.Join("_", (value ?? string.Empty).Split(Path.GetInvalidFileNameChars())).Trim();
         }
 
-        // Records bytes written and, roughly once a second, recomputes the
-        // running download speed from the delta since the last sample.
+        // Records bytes written and recomputes the running speed ~1/s.
         private static void UpdateProgress(SiteDownload download, long written)
         {
             download.BytesDownloaded = written;

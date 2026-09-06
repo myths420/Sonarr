@@ -30,8 +30,7 @@ function SitesPage() {
 
   const [term, setTerm] = useState('');
 
-  // Land on the first configured site once the site list has loaded and no
-  // specific one was requested in the url.
+  // Redirect /sites to the first configured site.
   useEffect(() => {
     if (!id && sites.length > 0) {
       navigate(`/sites/${sites[0].id}`, { replace: true });

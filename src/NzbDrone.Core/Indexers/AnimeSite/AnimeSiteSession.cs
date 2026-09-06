@@ -7,16 +7,9 @@ using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
-    // A manually-synchronised browser session for a Cloudflare-gated site.
-    // The user clears the challenge once in a real browser, then pastes the
-    // cf_clearance cookie it produced plus the exact User-Agent that earned
-    // it. Cloudflare binds cf_clearance to the User-Agent (and client IP),
-    // so the two must travel together and match the browser they came from
-    // -- that's why the User-Agent is a paired field, not a nicety.
-    //
-    // This is the same idea as an indexer "Cookie" field in Prowlarr /
-    // Jackett: no challenge is solved here, an already-solved session is
-    // just carried on outbound requests until it expires.
+    // The Session Clearance Cookie + Session User-Agent settings, resolved
+    // for one site. Cloudflare binds cf_clearance to the User-Agent, so both
+    // are required together.
     public class IndexerSessionConfig
     {
         public string TargetDomain { get; set; }
@@ -44,8 +37,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             };
         }
 
-        // Accept either the bare token or a whole pasted cookie string
-        // ("cf_clearance=abc123; __cf_bm=...; ...") -- take just cf_clearance.
+        // Accepts the bare token or a full "cf_clearance=...; __cf_bm=..." string.
         private static string ExtractClearance(string raw)
         {
             if (raw.IsNullOrWhiteSpace())
@@ -59,25 +51,20 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         }
     }
 
-    // Raised when a request carrying a pasted session comes back 403 --
-    // almost always an expired cf_clearance. Callers swallow it (returning
-    // no HTML) so a sync/search degrades to "0 results" rather than an
-    // unhandled failure; AnimeSiteSessionStatus + the health check are what
-    // actually tell the user to re-paste.
+    // Thrown when a request carrying a configured session returns 403.
     public class AnimeSiteSessionExpiredException : Exception
     {
         public string Domain { get; }
 
         public AnimeSiteSessionExpiredException(string domain)
-            : base($"The imported browser session for '{domain}' was rejected (403 Forbidden) -- its cf_clearance cookie has most likely expired. Open the site in your browser, copy a fresh cf_clearance cookie and the matching User-Agent, and update the indexer.")
+            : base($"The session for '{domain}' was rejected (403). The cf_clearance cookie has most likely expired; copy a fresh cookie and matching User-Agent from your browser into the indexer.")
         {
             Domain = domain;
         }
     }
 
-    // Process-wide record of which sites last rejected their pasted session,
-    // so a health check can surface an actionable warning in Sonarr's UI.
-    // Entries are cleared as soon as a request with that session succeeds.
+    // Sites whose configured session last returned 403, for the health
+    // check. Cleared when a request with that session next succeeds.
     public static class AnimeSiteSessionStatus
     {
         private static readonly ConcurrentDictionary<string, DateTime> Expired =

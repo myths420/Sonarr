@@ -6,15 +6,9 @@ using Sonarr.Http;
 
 namespace Sonarr.Api.V5.AnimeSite;
 
-// Lets a browser extension keep an AnimeSite indexer's manually-synced
-// Cloudflare session (cf_clearance cookie + User-Agent) fresh without the
-// user re-pasting it by hand every time it expires.
-//
-// Auth: every /api/v5/* route is API-key protected by the host pipeline
-// (same as the rest of Sonarr's API) -- an extension must send the
-// instance's API key (X-Api-Key header or ?apikey=). No extra check is
-// added here; adding one would only diverge from how the rest of the API
-// behaves.
+// Pushes a fresh Session Clearance Cookie + Session User-Agent to whichever
+// AnimeSite indexer matches a domain. API-key protected like the rest of
+// /api/v5/*.
 [V5ApiController("indexer/session")]
 public class IndexerSessionController : Controller
 {
@@ -30,9 +24,8 @@ public class IndexerSessionController : Controller
     }
 
     // GET /api/v5/indexer/session
-    // One row per AnimeSite indexer -- whether it has a session configured
-    // and whether that session has been failing (403). Lets the extension
-    // decide when it actually needs to push a fresh token.
+    // One row per AnimeSite indexer: whether it has a session and whether
+    // that session is failing (403).
     [HttpGet]
     [Produces("application/json")]
     public List<IndexerSessionStatusResource> GetSessions()
@@ -96,14 +89,6 @@ public class IndexerSessionController : Controller
             var settings = (AnimeSiteSettings)definition.Settings;
             settings.SessionClearanceCookie = token;
             settings.SessionUserAgent = userAgent;
-
-            // Persists to the Indexers table and raises
-            // ProviderUpdatedEvent<IIndexer>. AnimeSiteFetchOptions is
-            // rebuilt from settings on every fetch and AnimeSiteSessionClient
-            // replaces the cookie by name on its next request, so there's no
-            // stale client state to flush -- the next fetch uses the new
-            // session. Clearing the health-check flag here just makes the UI
-            // reflect it immediately rather than on the next success.
             _indexerFactory.Update(definition);
         }
 

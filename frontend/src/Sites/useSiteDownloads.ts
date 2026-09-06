@@ -21,8 +21,7 @@ export const useSiteDownloads = () => {
   };
 };
 
-// The download endpoint is per (show, episode), so the path can't be fixed
-// on a hook -- call fetchJson directly with the path built at click time.
+// Per (show, episode); the path is built at call time.
 export const useDownloadEpisodes = (showId: number) => {
   const queryClient = useQueryClient();
   const [isDownloading, setIsDownloading] = useState(false);

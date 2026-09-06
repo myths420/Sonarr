@@ -17,15 +17,13 @@ public class SiteShowResource : RestResource
     public List<string> Genres { get; set; } = new();
     public int AniListId { get; set; }
 
-    // Set by the controller when a Sonarr series with a matching (cleaned)
-    // title is already in the library -- lets the catalogue show an "in
-    // library" marker and link straight to the series page.
+    // Set by the controller when a matching library series exists.
     public int? SeriesId { get; set; }
     public string? SeriesTitleSlug { get; set; }
 }
 
-// Body for POST /siteshow/{id}/add. All optional -- omitted fields fall
-// back to the first configured root folder / quality profile.
+// Body for POST /siteshow/{id}/add. All optional; omitted fields use the
+// first configured root folder / quality profile.
 public class SiteShowAddResource
 {
     public string? RootFolderPath { get; set; }
@@ -50,9 +48,7 @@ public static class SiteShowResourceMapper
             Title = model.Title,
             Url = model.Url,
 
-            // Point the UI at our own locally-cached copy rather than the
-            // AniList CDN. Falls back to the raw URL if there's no metadata
-            // match (no cached file to serve).
+            // The locally-cached poster endpoint; null when there's no poster.
             PosterUrl = string.IsNullOrWhiteSpace(model.PosterUrl)
                 ? null
                 : $"/api/v5/siteshow/{model.Id}/poster",

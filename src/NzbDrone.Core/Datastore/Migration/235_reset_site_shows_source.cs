@@ -3,10 +3,8 @@ using NzbDrone.Core.Datastore.Migration.Framework;
 
 namespace NzbDrone.Core.Datastore.Migration
 {
-    // SiteShow.SourceListId changed meaning: it used to hold an AnimeSite
-    // *import list* id, it now holds an AnimeSite *indexer* id (one indexer
-    // = one site). Existing rows carry the old kind of id, so clear the
-    // table -- the Sites Refresh action repopulates it from the indexer.
+    // SiteShow.SourceListId now holds an AnimeSite indexer id (was an import
+    // list id). Clear the table; the Sites Refresh action repopulates it.
     [Migration(235)]
     public class reset_site_shows_source : NzbDroneMigrationBase
     {

@@ -11,8 +11,7 @@ interface SiteShowCardProps {
   show: SiteShow;
 }
 
-// Senpwai's search-result card -- clicking one opens the detail/episode
-// view (SiteShowDetailModal) rather than linking straight out to the site.
+// Catalogue card; opens SiteShowDetailModal on click.
 function SiteShowCard({ show }: SiteShowCardProps) {
   const { title, year, episodes, status, genres, posterUrl } = show;
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);

@@ -3,13 +3,9 @@ using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.AnimeSite
 {
-    // One show as seen on a configured AnimeSite import list's catalogue --
-    // deliberately NOT keyed on TVDB (most donghua/shorts this fork targets
-    // aren't in TVDB at all, see animesite-fork-status notes). Identity is
-    // (SourceListId, Slug), Slug being the last path segment of Url. Poster/
-    // Overview/etc are filled in best-effort by IShowMetadataProvider and
-    // may stay empty for shows no metadata source recognizes -- the catalogue
-    // still lists them by title alone.
+    // One show from an AnimeSite indexer's catalogue. Identity is
+    // (SourceListId, Slug); Slug is the last path segment of Url. Metadata
+    // fields are best-effort and may be empty.
     public class SiteShow : ModelBase
     {
         public int SourceListId { get; set; }

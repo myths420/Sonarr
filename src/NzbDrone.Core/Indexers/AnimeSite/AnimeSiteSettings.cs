@@ -26,10 +26,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             RuleFor(c => c.EpisodeUrlPattern).NotEmpty()
                 .WithMessage("'Episode URL Pattern' must not be empty.");
 
-            // Must be a valid regex AND contain exactly one capture group
-            // (the episode number) -- otherwise int.Parse(match.Groups[1])
-            // in the parser blows up on every search instead of failing
-            // once, clearly, here.
+            // Must be a valid regex with exactly one capture group (the
+            // episode number).
             RuleFor(c => c.EpisodeUrlPattern).Must(BeAValidRegexWithOneGroup)
                 .WithMessage("'Episode URL Pattern' must be a valid regex with exactly one capture group for the episode number, e.g. -episode-(\\d+)(?:-|/|$)")
                 .When(c => !string.IsNullOrWhiteSpace(c.EpisodeUrlPattern));
@@ -73,11 +71,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
-        // AngleSharp throws on QuerySelectorAll(...) with a malformed
-        // selector -- validate at save time instead of on the first search,
-        // same reasoning as the regex check above. An empty document is
-        // enough to exercise the selector's syntax without needing a real
-        // page fetch here.
+        // Validate selector syntax at save time.
         private static bool BeAValidCssSelector(string selector)
         {
             try
@@ -132,14 +126,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         }
     }
 
-    // One "hop" the link resolver can perform on a candidate download URL:
-    // if the URL's host matches HostContains, either (a) fetch that page and
-    // replace the URL with the href found by ResolveSelector (e.g.
-    // Mediafire's landing-page "Download" button), or (b) do a plain string
-    // substitution on the URL (e.g. mirrored.to's dl=0 -> dl=1). Rules are
-    // tried in order, repeatedly, until none match or a hop limit is hit --
-    // this is what makes a new site's landing-page quirks editable from
-    // Sonarr's UI instead of needing a C# code change.
+    // One landing-page hop: when a candidate URL's host contains
+    // HostContains, either fetch it and take the href from ResolveSelector,
+    // or replace UrlReplaceFrom with UrlReplaceTo in the URL. Rules are
+    // applied in order, repeatedly, up to a hop limit.
     public class LinkResolutionRule
     {
         public string HostContains { get; set; }
@@ -148,20 +138,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         public string UrlReplaceTo { get; set; }
     }
 
-    // One instance of this indexer = one website. Add another instance
-    // (Settings > Indexers > Add) with a different BaseUrl to add another
-    // site. Every part of the scrape that plausibly differs between sites
-    // is now a field below instead of hardcoded in AnimeSiteParser:
-    //   - which links on the search-results page count as series links
-    //   - which links on a series page count as episode links, and how the
-    //     episode number is pulled out of one
-    //   - which links on an episode page count as real download links, and
-    //     which hosts those are allowed to point at
-    // A site that still follows the general "search page -> series page ->
-    // episode page with download-host links" shape should be addable with
-    // just these fields, no new parser class. A site with a fundamentally
-    // different flow (e.g. requires JS-rendered content, a login, or a
-    // completely different navigation shape) would still need real code.
+    // One instance = one website. The per-site parts of the scrape are the
+    // fields below (selectors, URL patterns, hosts) or a full Scraping Script.
     public class AnimeSiteSettings : PropertywiseEquatable<AnimeSiteSettings>, IIndexerSettings
     {
         private static readonly AnimeSiteSettingsValidator Validator = new();
@@ -179,10 +157,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             MultiLanguages = Array.Empty<int>();
             FailDownloads = Array.Empty<int>();
 
-            // Left empty on purpose -- an empty Catalogue Script means "use
-            // the current built-in default" (AnimeSiteCatalogueOptions.
-            // FromIndexer), so improvements to that default are picked up
-            // without every saved indexer carrying a stale copy.
+            // Left empty: an empty Catalogue Script means "use the built-in
+            // default" (AnimeSiteCatalogueOptions.FromIndexer).
         }
 
         [FieldDefinition(0, Label = "Website URL", HelpText = "The site to search, e.g. https://animexin.dev or https://donghuaworld.com")]
@@ -236,10 +212,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         [FieldDefinition(16, Label = "Session User-Agent", Type = FieldType.Textbox, Advanced = true, HelpText = "The exact User-Agent string of the browser you copied the clearance cookie from (about:version / DevTools > navigator.userAgent). Cloudflare ties cf_clearance to the User-Agent, so a mismatch here fails with 403.")]
         public string SessionUserAgent { get; set; }
 
-        // Parsed/derived helpers used by AnimeSiteIndexer when constructing
-        // the parser -- kept here so the "how do I turn these text fields
-        // into what the parser actually needs" logic lives next to the
-        // fields themselves, not duplicated at every call site.
+        // Parsed forms of the text fields above.
         public string[] GetDirectDownloadHostsArray()
         {
             return (DirectDownloadHosts ?? "")

@@ -13,11 +13,9 @@ using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.AnimeSite
 {
-    // Builds Sonarr's Series/Episode shape straight from a catalogue show
-    // and its scraped episode list -- the fallback when AniList has no
-    // match for the show, so downloading from *any* site show still lands
-    // it in the Series tab. SkyHookProxy.GetSeriesInfo delegates here for
-    // ids in the SiteSeriesIds band.
+    // Builds the Series/Episode shape from a catalogue show and its scraped
+    // episode list, for shows with no AniList match. SkyHookProxy.GetSeriesInfo
+    // delegates here for ids in the SiteSeriesIds band.
     public interface ISiteScrapeSeriesInfoProxy
     {
         Tuple<Series, List<Episode>> GetSeriesInfo(int siteShowId);

@@ -19,23 +19,11 @@ using NzbDrone.Core.RemotePathMappings;
 
 namespace NzbDrone.Core.Download.Clients.DirectHttp
 {
-    // A "real" download client: unlike SABnzbd/qBittorrent/etc, which hand a
-    // link to an external app and poll its status, this one does the actual
-    // HTTP transfer itself, in-process. Direct port of the working Python
-    // pipeline (main.py's landing-page resolution + scraper.py's Download).
-    //
-    // SCOPE: plain direct-file downloads (mediafire/mirrored.to/generic
-    // host). No HLS/ffmpeg/Dailymotion-embed path yet -- that's a separate
-    // larger port (see hls.py).
-    //
-    // Each download goes into its own subfolder of DestinationDirectory
-    // (like a real download client's per-torrent folder) so Sonarr's import
-    // treats it as a discrete download and organises the file into the
-    // series/season folder, rather than leaving it loose next to the media.
-    //
-    // Queue state is kept in-memory AND mirrored to a small JSON file under
-    // the config folder, so a Sonarr restart between "download finished" and
-    // "Sonarr imported it" doesn't lose the completed download.
+    // Download client that does the HTTP transfer itself, in-process, for
+    // plain direct-file links. Each download goes into its own subfolder of
+    // DestinationDirectory so import treats it as a discrete download. Queue
+    // state is mirrored to a JSON file under the config folder so a restart
+    // mid-import doesn't lose a completed download.
     public class DirectHttpDownloadClient : DownloadClientBase<DirectHttpDownloadClientSettings>
     {
         private static readonly ConcurrentDictionary<string, DirectDownloadState> _items = new();
@@ -110,10 +98,7 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
 
                 _diskProvider.EnsureFolder(state.DownloadFolder);
 
-                // HEAD first so the queue has a real total to show progress
-                // against while the transfer runs (GetAsync below only
-                // returns once the whole body has streamed, so its
-                // ContentLength is too late for live progress).
+                // HEAD first so the queue has a total for progress.
                 try
                 {
                     var head = await _httpClient.HeadAsync(new HttpRequest(sourceUrl) { AllowAutoRedirect = true }, token);
@@ -141,8 +126,7 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
 
                     var response = await _httpClient.GetAsync(request, token);
 
-                    // Same safety net DownloadFileAsync has: a text/html body
-                    // is a landing/interstitial page, not the video.
+                    // A text/html body is a landing page, not the video.
                     if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))
                     {
                         throw new HttpException(request, response, "Site responded with html content.");
@@ -201,8 +185,6 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
 
             var downloadFolder = Path.Combine(root, safeTitle);
 
-            // Extension is a best guess (the vast majority of sources are mp4);
-            // the HLS path, when it lands, will produce .mkv here instead.
             return (downloadFolder, Path.Combine(downloadFolder, safeTitle + ".mp4"));
         }
 
@@ -294,10 +276,8 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                 {
                     var status = item.Status;
 
-                    // A download that was mid-flight when Sonarr stopped
-                    // can't be resumed -- but if the file is already fully on
-                    // disk, report it Completed so import still runs; else
-                    // mark it Failed rather than leaving it stuck.
+                    // On reload, an unfinished download becomes Completed if
+                    // its file is fully on disk, else Failed.
                     if (status is DownloadItemStatus.Downloading or DownloadItemStatus.Queued)
                     {
                         status = _diskProvider.FileExists(item.FilePath) && new FileInfo(item.FilePath).Length > 0

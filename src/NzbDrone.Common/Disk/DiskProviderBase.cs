@@ -18,11 +18,8 @@ namespace NzbDrone.Common.Disk
         {
             get
             {
-                // This fork runs against case-insensitive volumes (WSL
-                // drvfs mounts of Windows drives), where the stock
-                // Linux-only case-sensitive path comparison lets a folder be
-                // added as a series twice under different casing. Treat
-                // paths as case-insensitive everywhere instead.
+                // Case-insensitive on every OS -- this build targets
+                // case-insensitive volumes (e.g. WSL drvfs mounts).
                 return StringComparison.OrdinalIgnoreCase;
             }
         }

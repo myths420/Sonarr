@@ -6,9 +6,7 @@ using Sonarr.Http;
 
 namespace Sonarr.Api.V5.AnimeSite;
 
-// Read-only: shows are populated by SiteShowSyncCommand (POST
-// /api/v5/command {"name":"SiteShowSync","sourceListId":N}), triggered
-// from the Sites catalogue page's Refresh action.
+// Catalogue rows are populated by SiteShowSyncCommand.
 [V5ApiController("siteshow")]
 public class SiteShowController : Controller
 {
@@ -53,10 +51,8 @@ public class SiteShowController : Controller
         return resource;
     }
 
-    // Cross-reference the catalogue against the Sonarr library by cleaned
-    // title -- these shows aren't TVDB-keyed, so a normalised title match is
-    // the only link we have. Cheap: one GetAllSeries() (already cached) and a
-    // dictionary lookup per row.
+    // Sets SeriesId / SeriesTitleSlug on each row when a library series
+    // matches by site-show id, AniList id, or cleaned title.
     private void LinkLibrarySeries(List<SiteShowResource> resources)
     {
         if (resources.Count == 0)
@@ -90,10 +86,7 @@ public class SiteShowController : Controller
         {
             NzbDrone.Core.Tv.Series? series = null;
 
-            // Exact links first: the site-show id (scrape-backed series) or
-            // the AniList id (AniList-backed). Their Sonarr title comes from
-            // AniList / the site and may not match, so fall back to a
-            // cleaned-title match only for hand-added / TheTVDB series.
+            // Exact id links first, cleaned title as a fallback.
             if (seriesBySiteShowId.TryGetValue(resource.Id, out var siteSeries))
             {
                 series = siteSeries;
@@ -121,9 +114,7 @@ public class SiteShowController : Controller
         }
     }
 
-    // Locally-cached poster. Downloaded from AniList once (on metadata
-    // backfill, or lazily here on first request) and served from disk after
-    // that -- browsing the catalogue doesn't re-hit AniList's CDN.
+    // Locally-cached poster, served from disk.
     [HttpGet("{id:int}/poster")]
     public IActionResult GetSiteShowPoster(int id)
     {
@@ -158,10 +149,7 @@ public class SiteShowController : Controller
         return _siteShowService.ResolveEpisodeReleases(id, number).ToResource();
     }
 
-    // Starts a download for one episode. With no releaseUrl the top-ranked
-    // release is picked automatically (English-preferred, highest quality,
-    // most reliable host); pass releaseUrl to download a specific one the
-    // user chose from the Search results.
+    // Downloads one episode: the top-ranked release, or ?releaseUrl=.
     [HttpPost("{id:int}/episodes/{number:int}/download")]
     [Produces("application/json")]
     public ActionResult<SiteDownloadResource> DownloadSiteShowEpisode(int id, int number, [FromQuery] string? releaseUrl = null)
@@ -176,10 +164,7 @@ public class SiteShowController : Controller
         return download.ToResource();
     }
 
-    // Creates a real, monitored Sonarr series (AniList-backed, not TheTVDB)
-    // for this catalogue show so it shows up in the Series tab and gets
-    // Sonarr's daily new-episode handling. Returns the re-linked site show
-    // (seriesId / seriesTitleSlug now populated).
+    // Adds this catalogue show to the Series tab. Returns the re-linked row.
     [HttpPost("{id:int}/add")]
     [Produces("application/json")]
     public ActionResult<SiteShowResource> AddSiteShowAsSeries(int id, [FromBody] SiteShowAddResource? request)

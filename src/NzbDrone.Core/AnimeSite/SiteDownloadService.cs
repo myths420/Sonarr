@@ -79,8 +79,11 @@ namespace NzbDrone.Core.AnimeSite
             string outputPath;
             if (series != null && !string.IsNullOrWhiteSpace(series.Path))
             {
-                // Parseable name; the rescan renames it into the season folder.
-                var fileName = FileNameSafe($"{series.Title} - S01E{episodeNumber:00} - Episode {episodeNumber}") + ".mp4";
+                // A "<Show> Season 2" catalogue row is folded into the base
+                // series as Season 2 -- name the file for that season so the
+                // rescan drops it in the right season folder.
+                var season = SeasonTitleParser.Parse(show.Title).Season;
+                var fileName = FileNameSafe($"{series.Title} - S{season:00}E{episodeNumber:00} - Episode {episodeNumber}") + ".mp4";
                 outputPath = Path.Combine(series.Path, fileName);
             }
             else

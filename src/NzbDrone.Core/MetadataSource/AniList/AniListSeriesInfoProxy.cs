@@ -19,6 +19,11 @@ namespace NzbDrone.Core.MetadataSource.AniList
     public interface IAniListSeriesInfoProxy
     {
         Tuple<Series, List<Episode>> GetSeriesInfo(int aniListId);
+
+        // Multi-season: one AniList Media per season, earliest first ->
+        // Season 1..N of a single Series. Used when a catalogue show and
+        // its "Season 2/3/..." siblings were folded together.
+        Tuple<Series, List<Episode>> GetSeriesInfo(IReadOnlyList<int> aniListIds);
     }
 
     public class AniListSeriesInfoProxy : IAniListSeriesInfoProxy
@@ -59,14 +64,75 @@ namespace NzbDrone.Core.MetadataSource.AniList
 
         public Tuple<Series, List<Episode>> GetSeriesInfo(int aniListId)
         {
-            var media = FetchMedia(aniListId, 1);
-
+            var media = FetchMediaWithSchedule(aniListId);
             if (media == null)
             {
                 throw new SeriesNotFoundException(AniListSeriesIds.FromAniListId(aniListId));
             }
 
-            var airing = new List<AniListAiringNode>(media.AiringSchedule?.Nodes ?? new List<AniListAiringNode>());
+            var series = MapSeries(media);
+            var episodes = MapEpisodes(media, media.AiringSchedule?.Nodes ?? new List<AniListAiringNode>(), 1);
+
+            return new Tuple<Series, List<Episode>>(series, episodes);
+        }
+
+        public Tuple<Series, List<Episode>> GetSeriesInfo(IReadOnlyList<int> aniListIds)
+        {
+            if (aniListIds == null || aniListIds.Count <= 1)
+            {
+                return GetSeriesInfo(aniListIds is { Count: 1 } ? aniListIds[0] : throw new SeriesNotFoundException(0));
+            }
+
+            var media = new List<AniListMedia>();
+            foreach (var id in aniListIds)
+            {
+                var m = FetchMediaWithSchedule(id);
+                if (m != null)
+                {
+                    media.Add(m);
+                }
+            }
+
+            if (media.Count == 0)
+            {
+                throw new SeriesNotFoundException(AniListSeriesIds.FromAniListId(aniListIds[0]));
+            }
+
+            if (media.Count == 1)
+            {
+                return new Tuple<Series, List<Episode>>(MapSeries(media[0]),
+                    MapEpisodes(media[0], media[0].AiringSchedule?.Nodes ?? new List<AniListAiringNode>(), 1));
+            }
+
+            // Earliest-aired first -> Season 1..N.
+            media.Sort((a, b) => Nullable.Compare(ToDate(a.StartDate), ToDate(b.StartDate)));
+
+            var series = MapSeries(media[0]);
+            series.AniListIds = new HashSet<int>(aniListIds);
+
+            var episodes = new List<Episode>();
+            for (var i = 0; i < media.Count; i++)
+            {
+                var seasonNumber = i + 1;
+                series.Seasons.RemoveAll(s => s.SeasonNumber == seasonNumber);
+                series.Seasons.Add(new Season { SeasonNumber = seasonNumber, Monitored = true });
+                episodes.AddRange(MapEpisodes(media[i], media[i].AiringSchedule?.Nodes ?? new List<AniListAiringNode>(), seasonNumber));
+            }
+
+            var last = media[media.Count - 1];
+            series.Status = MapStatus(last.Status);
+            series.LastAired = ToDate(last.EndDate) ?? series.LastAired;
+
+            return new Tuple<Series, List<Episode>>(series, episodes);
+        }
+
+        private AniListMedia FetchMediaWithSchedule(int aniListId)
+        {
+            var media = FetchMedia(aniListId, 1);
+            if (media == null)
+            {
+                return null;
+            }
 
             var page = 1;
             while (media.AiringSchedule?.PageInfo?.HasNextPage == true && page < MaxSchedulePages)
@@ -79,14 +145,11 @@ namespace NzbDrone.Core.MetadataSource.AniList
                     break;
                 }
 
-                airing.AddRange(nodes);
+                media.AiringSchedule.Nodes.AddRange(nodes);
                 media.AiringSchedule.PageInfo = next.AiringSchedule?.PageInfo;
             }
 
-            var series = MapSeries(media);
-            var episodes = MapEpisodes(media, airing);
-
-            return new Tuple<Series, List<Episode>>(series, episodes);
+            return media;
         }
 
         private AniListMedia FetchMedia(int aniListId, int page)
@@ -173,7 +236,7 @@ namespace NzbDrone.Core.MetadataSource.AniList
             return series;
         }
 
-        private static List<Episode> MapEpisodes(AniListMedia media, List<AniListAiringNode> airing)
+        private static List<Episode> MapEpisodes(AniListMedia media, List<AniListAiringNode> airing, int seasonNumber)
         {
             var byNumber = new Dictionary<int, Episode>();
 
@@ -183,7 +246,7 @@ namespace NzbDrone.Core.MetadataSource.AniList
 
                 byNumber[node.Episode] = new Episode
                 {
-                    SeasonNumber = 1,
+                    SeasonNumber = seasonNumber,
                     EpisodeNumber = node.Episode,
                     AbsoluteEpisodeNumber = node.Episode,
                     Title = $"Episode {node.Episode}",
@@ -216,7 +279,7 @@ namespace NzbDrone.Core.MetadataSource.AniList
 
                 byNumber[n] = new Episode
                 {
-                    SeasonNumber = 1,
+                    SeasonNumber = seasonNumber,
                     EpisodeNumber = n,
                     AbsoluteEpisodeNumber = n,
                     Title = $"Episode {n}",
@@ -341,7 +404,7 @@ namespace NzbDrone.Core.MetadataSource.AniList
         private class AniListAiringSchedule
         {
             public AniListPageInfo PageInfo { get; set; }
-            public List<AniListAiringNode> Nodes { get; set; }
+            public List<AniListAiringNode> Nodes { get; set; } = new List<AniListAiringNode>();
         }
 
         private class AniListPageInfo

@@ -51,9 +51,18 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         public Tuple<Series, List<Episode>> GetSeriesInfo(int tvdbSeriesId)
         {
             // AniList-backed series carry a synthetic id (see AniListSeriesIds).
+            // A folded multi-season series stores every season's AniList id in
+            // AniListIds -- use all of them so the refresh rebuilds Season 1..N.
             if (AniListSeriesIds.IsAniListId(tvdbSeriesId))
             {
-                return _aniListSeriesInfoProxy.GetSeriesInfo(AniListSeriesIds.ToAniListId(tvdbSeriesId));
+                var existing = _seriesService.FindByTvdbId(tvdbSeriesId);
+                var ids = existing?.AniListIds is { Count: > 1 }
+                    ? existing.AniListIds.ToList()
+                    : new List<int> { AniListSeriesIds.ToAniListId(tvdbSeriesId) };
+
+                return ids.Count > 1
+                    ? _aniListSeriesInfoProxy.GetSeriesInfo(ids)
+                    : _aniListSeriesInfoProxy.GetSeriesInfo(ids[0]);
             }
 
             // Catalogue show with no AniList match (see SiteSeriesIds).

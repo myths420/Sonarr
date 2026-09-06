@@ -10,10 +10,12 @@ using NzbDrone.Core.Indexers.AnimeSite;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource.AniList;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.ThingiProvider.Events;
 using NzbDrone.Core.Tv;
+using NzbDrone.Core.Tv.Commands;
 
 namespace NzbDrone.Core.AnimeSite
 {
@@ -67,6 +69,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly ISeriesService _seriesService;
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityProfileService _qualityProfileService;
+        private readonly IManageCommandQueue _commandQueueManager;
         private readonly IDiskProvider _diskProvider;
         private readonly IAnimeSiteFetcher _fetcher;
         private readonly Logger _logger;
@@ -82,6 +85,7 @@ namespace NzbDrone.Core.AnimeSite
                                ISeriesService seriesService,
                                IRootFolderService rootFolderService,
                                IQualityProfileService qualityProfileService,
+                               IManageCommandQueue commandQueueManager,
                                IDiskProvider diskProvider,
                                IAnimeSiteFetcher fetcher,
                                Logger logger)
@@ -94,6 +98,7 @@ namespace NzbDrone.Core.AnimeSite
             _scrapeMetadataProvider = scrapeMetadataProvider;
             _posterService = posterService;
             _addSeriesService = addSeriesService;
+            _commandQueueManager = commandQueueManager;
             _seriesService = seriesService;
             _rootFolderService = rootFolderService;
             _qualityProfileService = qualityProfileService;
@@ -318,6 +323,34 @@ namespace NzbDrone.Core.AnimeSite
             {
                 _logger.Info("Site show '{0}' is already in the library as series {1}", show.Title, existing.Id);
                 return existing;
+            }
+
+            // "<Show> Season 2/3/..." -> fold into the base show rather than
+            // adding a poster of its own. Match the base show by cleaned
+            // title (its own, or with a season suffix stripped).
+            var seasonInfo = SeasonTitleParser.Parse(show.Title);
+            if (seasonInfo.HasSeason)
+            {
+                var baseClean = seasonInfo.BaseTitle.CleanSeriesTitle();
+                var baseSeries = _seriesService.GetAllSeries().FirstOrDefault(s =>
+                    s.CleanTitle == baseClean ||
+                    SeasonTitleParser.Parse(s.Title).BaseTitle.CleanSeriesTitle() == baseClean);
+
+                if (baseSeries != null)
+                {
+                    // AniList-backed base: record this season's id and refresh
+                    // so the proxy rebuilds Season 1..N. A TheTVDB base already
+                    // has all its seasons -- nothing to merge, just reuse it.
+                    if (aniListId > 0 && AniListSeriesIds.IsAniListId(baseSeries.TvdbId) && !baseSeries.AniListIds.Contains(aniListId))
+                    {
+                        baseSeries.AniListIds.Add(aniListId);
+                        _seriesService.UpdateSeries(baseSeries, publishUpdatedEvent: false);
+                        _commandQueueManager.Push(new RefreshSeriesCommand(new List<int> { baseSeries.Id }));
+                    }
+
+                    _logger.Info("Folded site show '{0}' into series {1} '{2}' as season {3}", show.Title, baseSeries.Id, baseSeries.Title, seasonInfo.Season);
+                    return baseSeries;
+                }
             }
 
             var resolvedRoot = ResolveRootFolder(rootFolderPath);

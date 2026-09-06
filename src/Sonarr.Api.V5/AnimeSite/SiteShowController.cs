@@ -71,6 +71,14 @@ public class SiteShowController : Controller
                 seriesByCleanTitle.TryAdd(clean, series);
             }
 
+            // Also index the season-suffix-stripped title so a "Season 2"
+            // catalogue row links to the series it was folded into.
+            var baseClean = SeasonTitleParser.Parse(series.Title).BaseTitle.CleanSeriesTitle();
+            if (!string.IsNullOrEmpty(baseClean))
+            {
+                seriesByCleanTitle.TryAdd(baseClean, series);
+            }
+
             foreach (var aniListId in series.AniListIds)
             {
                 seriesByAniListId.TryAdd(aniListId, series);

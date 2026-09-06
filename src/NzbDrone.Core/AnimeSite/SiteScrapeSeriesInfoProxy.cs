@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
@@ -30,16 +31,19 @@ namespace NzbDrone.Core.AnimeSite
         private readonly ISiteShowRepository _siteShowRepository;
         private readonly IIndexerFactory _indexerFactory;
         private readonly IAnimeSiteCatalogBrowser _catalogBrowser;
+        private readonly IConfigFileProvider _configFileProvider;
         private readonly Logger _logger;
 
         public SiteScrapeSeriesInfoProxy(ISiteShowRepository siteShowRepository,
                                          IIndexerFactory indexerFactory,
                                          IAnimeSiteCatalogBrowser catalogBrowser,
+                                         IConfigFileProvider configFileProvider,
                                          Logger logger)
         {
             _siteShowRepository = siteShowRepository;
             _indexerFactory = indexerFactory;
             _catalogBrowser = catalogBrowser;
+            _configFileProvider = configFileProvider;
             _logger = logger;
         }
 
@@ -59,7 +63,15 @@ namespace NzbDrone.Core.AnimeSite
 
         private Series MapSeries(SiteShow show)
         {
-            var title = string.IsNullOrWhiteSpace(show.Title) ? $"Site show {show.Id}" : show.Title;
+            var rawTitle = string.IsNullOrWhiteSpace(show.Title) ? $"Site show {show.Id}" : show.Title;
+
+            // Drop a trailing "Season 1" so the base show and its season
+            // rows share a cleaned title (used for folding).
+            var title = SeasonTitleParser.Parse(rawTitle).BaseTitle;
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = rawTitle;
+            }
 
             var series = new Series
             {
@@ -83,9 +95,14 @@ namespace NzbDrone.Core.AnimeSite
                 Monitored = true
             };
 
-            if (Uri.TryCreate(show.PosterUrl, UriKind.Absolute, out _))
+            // Serve the poster from our own cached copy (SiteShowPosterService
+            // fetched it with the Referer header the site's hotlink
+            // protection needs) rather than the raw site URL, which Sonarr's
+            // MediaCoverService gets a 403 on.
+            var poster = PosterUrlFor(show);
+            if (poster != null)
             {
-                series.Images.Add(new MediaCover.MediaCover(MediaCoverTypes.Poster, show.PosterUrl));
+                series.Images.Add(new MediaCover.MediaCover(MediaCoverTypes.Poster, poster));
             }
 
             if (show.Year > 0)
@@ -153,6 +170,22 @@ namespace NzbDrone.Core.AnimeSite
             }
 
             return null;
+        }
+
+        private string PosterUrlFor(SiteShow show)
+        {
+            if (string.IsNullOrWhiteSpace(show.PosterUrl))
+            {
+                return null;
+            }
+
+            // Our own API endpoint, absolute so MediaCoverService can fetch
+            // it: http://localhost:<port><urlbase>/api/v5/siteshow/<id>/poster
+            var port = _configFileProvider.Port;
+            var urlBase = _configFileProvider.UrlBase ?? string.Empty;
+            var apiKey = _configFileProvider.ApiKey;
+
+            return $"http://localhost:{port}{urlBase}/api/v5/siteshow/{show.Id}/poster?apikey={apiKey}";
         }
 
         private static SeriesStatusType MapStatus(string status)

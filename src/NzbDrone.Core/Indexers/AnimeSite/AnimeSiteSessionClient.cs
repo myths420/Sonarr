@@ -29,7 +29,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         {
             _logger = logger;
 
-            var handler = new SocketsHttpHandler
+            var socketsHandler = new SocketsHttpHandler
             {
                 CookieContainer = _cookies,
                 UseCookies = true,
@@ -39,6 +39,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
                 ConnectTimeout = TimeSpan.FromSeconds(20)
             };
+
+            // Logs the outbound request + any failing response body when the
+            // AnimeSite logger is at Trace -- turn that on to see exactly
+            // what a 4xx from a site (or from Sonarr's own API via a proxy)
+            // is complaining about.
+            var handler = new LoggingHttpHandler(logger, socketsHandler);
 
             _client = new HttpClient(handler, disposeHandler: true)
             {

@@ -10,6 +10,9 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.ImportLists;
+using NzbDrone.Core.MediaFiles.Commands;
+using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.AnimeSite
 {
@@ -39,6 +42,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly ISiteShowService _siteShowService;
         private readonly ISiteShowRepository _siteShowRepository;
         private readonly IImportListFactory _importListFactory;
+        private readonly IManageCommandQueue _commandQueueManager;
         private readonly IHttpClient _httpClient;
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
@@ -46,6 +50,7 @@ namespace NzbDrone.Core.AnimeSite
         public SiteDownloadService(ISiteShowService siteShowService,
                                    ISiteShowRepository siteShowRepository,
                                    IImportListFactory importListFactory,
+                                   IManageCommandQueue commandQueueManager,
                                    IHttpClient httpClient,
                                    IDiskProvider diskProvider,
                                    Logger logger)
@@ -53,6 +58,7 @@ namespace NzbDrone.Core.AnimeSite
             _siteShowService = siteShowService;
             _siteShowRepository = siteShowRepository;
             _importListFactory = importListFactory;
+            _commandQueueManager = commandQueueManager;
             _httpClient = httpClient;
             _diskProvider = diskProvider;
             _logger = logger;
@@ -76,9 +82,26 @@ namespace NzbDrone.Core.AnimeSite
                 ? Path.GetTempPath()
                 : listDefinition.RootFolderPath;
 
-            var safeShowTitle = string.Join("_", show.Title.Split(Path.GetInvalidFileNameChars()));
-            var safeFileName = string.Join("_", $"{show.Title} - Episode {episodeNumber:000}".Split(Path.GetInvalidFileNameChars()));
-            var outputPath = Path.Combine(destinationRoot, safeShowTitle, safeFileName + ".mp4");
+            // Downloading anything from a show pulls it into the Series tab:
+            // auto-create the (AniList-backed) series so the file lands in
+            // its folder and Sonarr imports/tracks it on the rescan below.
+            var series = TryEnsureSeries(showId);
+
+            string outputPath;
+            if (series != null && !string.IsNullOrWhiteSpace(series.Path))
+            {
+                // Drop it straight in the series folder with a name Sonarr's
+                // parser can match; the post-download rescan renames it into
+                // the season folder per the user's naming config.
+                var fileName = FileNameSafe($"{series.Title} - S01E{episodeNumber:00} - Episode {episodeNumber}") + ".mp4";
+                outputPath = Path.Combine(series.Path, fileName);
+            }
+            else
+            {
+                var safeShowTitle = FileNameSafe(show.Title);
+                var safeFileName = FileNameSafe($"{show.Title} - Episode {episodeNumber:000}");
+                outputPath = Path.Combine(destinationRoot, safeShowTitle, safeFileName + ".mp4");
+            }
 
             var download = new SiteDownload
             {
@@ -87,6 +110,7 @@ namespace NzbDrone.Core.AnimeSite
                 EpisodeNumber = episodeNumber,
                 Title = release.Title,
                 OutputPath = outputPath,
+                SeriesId = series?.Id,
                 StartedAt = DateTime.UtcNow,
                 Status = SiteDownloadStatus.Downloading,
                 Cts = new CancellationTokenSource()
@@ -184,6 +208,14 @@ namespace NzbDrone.Core.AnimeSite
                 download.BytesPerSecond = 0;
                 download.Status = SiteDownloadStatus.Completed;
                 _logger.Info("[{0}] Site download completed -> {1}", download.Title, download.OutputPath);
+
+                if (download.SeriesId.HasValue)
+                {
+                    // Let Sonarr import the file we just dropped in the
+                    // series folder: rename into the season folder, create
+                    // the EpisodeFile, mark the episode hasFile.
+                    _commandQueueManager.Push(new RescanSeriesCommand(download.SeriesId.Value));
+                }
             }
             catch (OperationCanceledException)
             {
@@ -205,6 +237,31 @@ namespace NzbDrone.Core.AnimeSite
                     File.Delete(partPath);
                 }
             }
+        }
+
+        private Series TryEnsureSeries(int showId)
+        {
+            try
+            {
+                return _siteShowService.AddAsSeries(showId, null, null, searchForMissingEpisodes: false);
+            }
+            catch (SiteSeriesAddException ex)
+            {
+                // No AniList match yet -- fall back to the plain per-show
+                // folder; the file still downloads, it just isn't tracked.
+                _logger.Debug("Auto-add to Series tab skipped for site show {0}: {1}", showId, ex.Message);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Auto-add to Series tab failed for site show {0}", showId);
+                return null;
+            }
+        }
+
+        private static string FileNameSafe(string value)
+        {
+            return string.Join("_", (value ?? string.Empty).Split(Path.GetInvalidFileNameChars())).Trim();
         }
 
         // Records bytes written and, roughly once a second, recomputes the

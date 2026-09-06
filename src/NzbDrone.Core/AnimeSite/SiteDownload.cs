@@ -31,6 +31,11 @@ namespace NzbDrone.Core.AnimeSite
         public string Message { get; set; }
         public CancellationTokenSource Cts { get; set; }
 
+        // Set when the download's site show was auto-added as a Sonarr
+        // series -- on completion the file is dropped in the series folder
+        // and a rescan imports/tracks it.
+        internal int? SeriesId { get; set; }
+
         // Sampling state for the BytesPerSecond calc -- updated from the
         // download's progress callback, not meant to be read directly.
         internal DateTime SpeedSampleTime { get; set; }

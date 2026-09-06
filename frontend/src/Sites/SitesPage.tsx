@@ -16,9 +16,30 @@ import { InputChanged } from 'typings/inputs';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import SiteShowCard from './SiteShowCard';
-import styles from './SitesPage.css';
 import useSites from './useSites';
 import useSiteShows from './useSiteShows';
+import styles from './SitesPage.css';
+
+interface SiteTabProps {
+  id: number;
+  name: string;
+  isActive: boolean;
+  onSelect: (id: number) => void;
+}
+
+function SiteTab({ id, name, isActive, onSelect }: SiteTabProps) {
+  const handleClick = useCallback(() => onSelect(id), [onSelect, id]);
+
+  return (
+    <button
+      type="button"
+      className={isActive ? styles.siteTabActive : styles.siteTab}
+      onClick={handleClick}
+    >
+      {name}
+    </button>
+  );
+}
 
 function SitesPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,9 +71,11 @@ function SitesPage() {
 
   const filteredShows = useMemo(() => {
     const q = term.trim().toLowerCase();
+
     if (!q) {
       return shows;
     }
+
     return shows.filter((show) => show.title.toLowerCase().includes(q));
   }, [shows, term]);
 
@@ -63,14 +86,24 @@ function SitesPage() {
 
   const executeCommand = useExecuteCommand();
   const isSyncing = useCommandExecuting(CommandNames.SiteShowSync);
+  const isAddingAll = useCommandExecuting(CommandNames.SiteAddAll);
 
   const handleRefreshPress = useCallback(() => {
     executeCommand({ name: CommandNames.SiteShowSync, sourceListId });
   }, [executeCommand, sourceListId]);
 
+  const handleAddAllPress = useCallback(() => {
+    executeCommand({ name: CommandNames.SiteAddAll, sourceListId });
+  }, [executeCommand, sourceListId]);
+
   const handleSearchChange = useCallback(
     ({ value }: InputChanged<string>) => setTerm(value),
     []
+  );
+
+  const handleSiteSelect = useCallback(
+    (siteId: number) => navigate(`/sites/${siteId}`),
+    [navigate]
   );
 
   if (isFetchingSites && sites.length === 0) {
@@ -105,6 +138,14 @@ function SitesPage() {
             isSpinning={isSyncing}
             onPress={handleRefreshPress}
           />
+
+          <PageToolbarButton
+            label={translate('SitesAddAll')}
+            iconName={icons.ADD}
+            isSpinning={isAddingAll}
+            isDisabled={shows.length === 0}
+            onPress={handleAddAllPress}
+          />
         </PageToolbarSection>
       </PageToolbar>
 
@@ -112,18 +153,13 @@ function SitesPage() {
         {sites.length > 1 ? (
           <div className={styles.siteTabs}>
             {sites.map((site) => (
-              <button
+              <SiteTab
                 key={site.id}
-                type="button"
-                className={
-                  site.id === sourceListId
-                    ? styles.siteTabActive
-                    : styles.siteTab
-                }
-                onClick={() => navigate(`/sites/${site.id}`)}
-              >
-                {site.name}
-              </button>
+                id={site.id}
+                name={site.name}
+                isActive={site.id === sourceListId}
+                onSelect={handleSiteSelect}
+              />
             ))}
           </div>
         ) : null}

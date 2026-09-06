@@ -2077,6 +2077,7 @@
   "SingleEpisode": "Single Episode",
   "SingleEpisodeInvalidFormat": "Single Episode: Invalid Format",
   "Sites": "Sites",
+  "SitesAddAll": "Add All to Library",
   "SitesAddToSonarr": "Add to Sonarr",
   "SitesBrowse": "Browse",
   "SitesCatalogueEmpty": "No shows in this site's catalogue yet. Use Refresh to browse it.",

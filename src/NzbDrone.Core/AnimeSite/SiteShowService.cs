@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
@@ -51,7 +52,7 @@ namespace NzbDrone.Core.AnimeSite
         }
     }
 
-    public class SiteShowService : ISiteShowService, IExecute<SiteShowSyncCommand>, IHandleAsync<ProviderDeletedEvent<IIndexer>>
+    public class SiteShowService : ISiteShowService, IExecute<SiteShowSyncCommand>, IExecute<SiteAddAllCommand>, IHandleAsync<ProviderDeletedEvent<IIndexer>>
     {
         private const int DefaultBackfillLimit = 25;
 
@@ -455,6 +456,47 @@ namespace NzbDrone.Core.AnimeSite
 
             var manual = message.Trigger == CommandTrigger.Manual;
             BackfillMetadata(message.SourceListId, manual ? 75 : DefaultBackfillLimit, manual);
+        }
+
+        public void Execute(SiteAddAllCommand message)
+        {
+            var shows = _repository.FindBySourceList(message.SourceListId);
+            if (shows.Count == 0)
+            {
+                _logger.Warn("Add All: no catalogue shows for indexer {0} -- Refresh it first.", message.SourceListId);
+                return;
+            }
+
+            var added = 0;
+            var skipped = 0;
+            var failed = 0;
+
+            for (var i = 0; i < shows.Count; i++)
+            {
+                var show = shows[i];
+                _logger.ProgressInfo("Add All: {0}/{1} - {2}", i + 1, shows.Count, show.Title);
+
+                try
+                {
+                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, false);
+                    if (series != null)
+                    {
+                        added++;
+                    }
+                }
+                catch (SiteSeriesAddException ex)
+                {
+                    skipped++;
+                    _logger.Debug("Add All: skipped '{0}': {1}", show.Title, ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    _logger.Warn(ex, "Add All: failed to add '{0}'", show.Title);
+                }
+            }
+
+            _logger.Info("Add All for indexer {0}: {1} added, {2} skipped (no metadata / already present), {3} failed", message.SourceListId, added, skipped, failed);
         }
 
         // Drop a site's catalogue rows when its indexer is deleted.

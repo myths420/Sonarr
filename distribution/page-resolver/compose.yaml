@@ -18,8 +18,8 @@ services:
     environment:
       - PORT=3000
       - NAV_TIMEOUT_MS=45000
-    ports:
-      - 3000:3000
+    # No host port -- Sonarr reaches it on proxynet as http://page-resolver:3000.
+    # (Add `ports: ["3010:3000"]` only if you want to curl it from the host.)
     networks:
       - proxynet
     labels:

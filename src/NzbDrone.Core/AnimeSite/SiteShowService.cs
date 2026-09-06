@@ -295,7 +295,7 @@ namespace NzbDrone.Core.AnimeSite
             string episodeHtml;
             try
             {
-                episodeHtml = _httpClient.Get(new HttpRequest(episode.Url)).Content;
+                episodeHtml = _httpClient.Get(AnimeSiteHttp.BuildRequest(episode.Url, show.Url)).Content;
             }
             catch (Exception ex)
             {

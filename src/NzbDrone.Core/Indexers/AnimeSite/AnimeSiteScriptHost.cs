@@ -37,7 +37,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         {
             try
             {
-                return _httpClient.Get(new HttpRequest(url)).Content;
+                return _httpClient.Get(AnimeSiteHttp.BuildRequest(url)).Content;
             }
             catch (Exception ex)
             {

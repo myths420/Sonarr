@@ -86,7 +86,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
                 string content;
                 try
                 {
-                    content = _httpClient.Get(new HttpRequest(url)).Content;
+                    content = _httpClient.Get(AnimeSiteHttp.BuildRequest(url)).Content;
                 }
                 catch (Exception ex)
                 {

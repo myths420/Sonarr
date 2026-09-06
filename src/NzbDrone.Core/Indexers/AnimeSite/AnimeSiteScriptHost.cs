@@ -23,18 +23,73 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             _logger = logger;
         }
 
-        // host.get(url) -> page HTML, or "" on failure. Uses the site's
-        // headless-browser / session options when configured.
+        // host.get(url[, referer]) -> page HTML, or "" on failure. Routed
+        // through the site's headless browser / session exactly like the
+        // fetches AnimeSite makes itself -- so in Always mode a sub-page or
+        // an off-site download link a script follows goes through
+        // Byparr/FlareSolverr too, not a raw request that Cloudflare blocks.
         public string Get(string url)
+        {
+            return Get(url, null);
+        }
+
+        public string Get(string url, string referer)
         {
             try
             {
-                return _fetcher.GetHtml(url, null, _fetch) ?? "";
+                var page = _fetcher.GetPage(url, string.IsNullOrEmpty(referer) ? null : referer, _fetch);
+
+                if (string.IsNullOrEmpty(page.Html) && _fetch.Mode == AnimeSiteBrowserMode.Always)
+                {
+                    _logger.Warn("Scraping script host.get(): headless browser returned nothing for {0}", url);
+                }
+
+                return page.Html ?? "";
             }
             catch (Exception ex)
             {
                 _logger.Debug(ex, "Scraping script host.get() failed for {0}", url);
                 return "";
+            }
+        }
+
+        // host.getPage(url[, referer]) -> JSON {html, finalUrl}. finalUrl is
+        // where the fetch actually landed (the headless browser reports the
+        // post-redirect URL) -- use it to follow a shortener or a
+        // redirect-only external download link.
+        public string GetPage(string url)
+        {
+            return GetPage(url, null);
+        }
+
+        public string GetPage(string url, string referer)
+        {
+            try
+            {
+                var page = _fetcher.GetPage(url, string.IsNullOrEmpty(referer) ? null : referer, _fetch);
+                return JsonSerializer.Serialize(new { html = page.Html ?? "", finalUrl = page.FinalUrl ?? url });
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Scraping script host.getPage() failed for {0}", url);
+                return JsonSerializer.Serialize(new { html = "", finalUrl = url });
+            }
+        }
+
+        // host.resolveUrl(url) -> the URL the fetch ends up on after
+        // redirects, routed through the headless browser in Always mode.
+        // Returns the input url unchanged on failure.
+        public string ResolveUrl(string url)
+        {
+            try
+            {
+                var page = _fetcher.GetPage(url, null, _fetch);
+                return string.IsNullOrWhiteSpace(page.FinalUrl) ? url : page.FinalUrl;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Scraping script host.resolveUrl() failed for {0}", url);
+                return url;
             }
         }
 

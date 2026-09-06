@@ -38,11 +38,27 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         }
     }
 
+    // The result of a fetch: the page HTML plus the URL it actually ended
+    // up on (after redirects / a headless-browser navigation). FinalUrl is
+    // what a Scraping Script needs to follow a shortener or a redirect-only
+    // external download link -- host.get() alone only hands back HTML.
+    public class AnimeSitePage
+    {
+        public string Html { get; set; } = string.Empty;
+        public string FinalUrl { get; set; } = string.Empty;
+
+        public static readonly AnimeSitePage Empty = new AnimeSitePage();
+    }
+
     // Fetches page HTML, optionally through a FlareSolverr-compatible
-    // headless browser (Headless Browser URL setting).
+    // headless browser (Headless Browser URL setting). In Always mode every
+    // fetch here -- the site's own pages, sub-pages, and off-site download
+    // links a Scraping Script follows -- is routed through that browser.
     public interface IAnimeSiteFetcher
     {
         string GetHtml(string url, string referer, AnimeSiteFetchOptions fetch);
+
+        AnimeSitePage GetPage(string url, string referer, AnimeSiteFetchOptions fetch);
     }
 
     public class AnimeSiteFetcher : IAnimeSiteFetcher
@@ -60,55 +76,72 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         public string GetHtml(string url, string referer, AnimeSiteFetchOptions fetch)
         {
+            return GetPage(url, referer, fetch).Html;
+        }
+
+        public AnimeSitePage GetPage(string url, string referer, AnimeSiteFetchOptions fetch)
+        {
             fetch ??= AnimeSiteFetchOptions.Direct;
 
+            // Always: route every fetch -- the site, its sub-pages, and any
+            // off-site link a script follows -- through the headless browser.
+            // Direct is only a last resort if the browser itself is down.
             if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Always)
             {
                 return Headless(url, fetch) ?? Direct(url, referer, fetch);
             }
 
-            var html = Direct(url, referer, fetch);
+            var page = Direct(url, referer, fetch);
 
-            if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Auto && LooksBlocked(html))
+            if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Auto && LooksBlocked(page.Html))
             {
                 _logger.Debug("AnimeSite: {0} looks Cloudflare-blocked, retrying via headless browser", url);
-                return Headless(url, fetch) ?? html;
+                return Headless(url, fetch) ?? page;
             }
 
-            return html;
+            return page;
         }
 
-        private string Direct(string url, string referer, AnimeSiteFetchOptions fetch)
+        private AnimeSitePage Direct(string url, string referer, AnimeSiteFetchOptions fetch)
         {
             if (fetch.UsesSession)
             {
                 try
                 {
-                    return _sessionClient.GetHtml(url, referer, fetch.Session);
+                    return new AnimeSitePage { Html = _sessionClient.GetHtml(url, referer, fetch.Session), FinalUrl = url };
                 }
                 catch (AnimeSiteSessionExpiredException)
                 {
-                    return string.Empty;
+                    return new AnimeSitePage { FinalUrl = url };
                 }
             }
 
             try
             {
-                return _httpClient.Get(AnimeSiteHttp.BuildRequest(url, referer)).Content;
+                var response = _httpClient.Get(AnimeSiteHttp.BuildRequest(url, referer));
+                return new AnimeSitePage
+                {
+                    Html = response.Content,
+                    FinalUrl = response.Request?.Url?.FullUri ?? url
+                };
             }
             catch (HttpException ex)
             {
                 // Keep the error body; Auto mode inspects it for challenge markers.
-                return ex.Response?.Content ?? string.Empty;
+                return new AnimeSitePage
+                {
+                    Html = ex.Response?.Content ?? string.Empty,
+                    FinalUrl = ex.Response?.Request?.Url?.FullUri ?? url
+                };
             }
             catch (Exception ex)
             {
                 _logger.Debug(ex, "AnimeSite direct fetch failed for {0}", url);
-                return string.Empty;
+                return new AnimeSitePage { FinalUrl = url };
             }
         }
 
-        private string Headless(string url, AnimeSiteFetchOptions fetch)
+        private AnimeSitePage Headless(string url, AnimeSiteFetchOptions fetch)
         {
             try
             {
@@ -135,7 +168,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                     return null;
                 }
 
-                return result.Solution.Response;
+                return new AnimeSitePage
+                {
+                    Html = result.Solution.Response,
+                    FinalUrl = string.IsNullOrWhiteSpace(result.Solution.Url) ? url : result.Solution.Url
+                };
             }
             catch (Exception ex)
             {

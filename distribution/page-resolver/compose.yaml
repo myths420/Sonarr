@@ -18,8 +18,11 @@ services:
     environment:
       - PORT=3000
       - NAV_TIMEOUT_MS=45000
-    # No host port -- Sonarr reaches it on proxynet as http://page-resolver:3000.
-    # (Add `ports: ["3010:3000"]` only if you want to curl it from the host.)
+      # Optional -- only needed for Turnstile-gated hosts (vik1ngfile).
+      # - CAPTCHA_PROVIDER=capsolver        # or 2captcha
+      # - CAPTCHA_API_KEY=your-key-here
+    # Host port optional -- Sonarr reaches it on proxynet as
+    # http://page-resolver:3000. Add `ports: ["3003:3000"]` to curl it.
     networks:
       - proxynet
     labels:

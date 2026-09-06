@@ -34,6 +34,24 @@ POST /resolve
 Success → `200 {"link": "https://<ip>/.../file.mp4/download?title=...", "filename": "...", "elapsedMs": 1234}`
 Failure → `502 {"error": "...", "elapsedMs": 1234}`
 
+## Turnstile (vik1ngfile)
+
+Some hosts put a Cloudflare Turnstile widget in front of the link that
+won't even render in an automated browser. Set a solver and the resolver
+handles it automatically (detects the sitekey, solves, injects the token,
+re-fires the flow):
+
+```yaml
+environment:
+  - CAPTCHA_PROVIDER=capsolver   # or 2captcha
+  - CAPTCHA_API_KEY=CAP-XXXXXXXX
+```
+
+CapSolver and 2captcha both charge ~$0.5–1 per 1000 Turnstile solves.
+Without a key, a Turnstile page returns
+`502 {"error": "Turnstile present ... but no CAPTCHA_API_KEY configured"}`.
+`GET /health` shows whether a solver is active.
+
 ## Wire it into Sonarr
 
 Set **Settings → Indexers → (your AnimeSite indexer) → Page Resolver URL**

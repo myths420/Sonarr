@@ -1,38 +1,39 @@
 'use strict';
 
 // Headless-browser resolver for JS-gated download pages that
-// FlareSolverr/Byparr can't handle because they need a click (e.g.
-// misterdonghua.in's "Get Video" button, which only runs its encrypted
-// download-link API after the click). misterdonghua also sniffs for
-// headless / webdriver / adblock, so this uses stealth and leaves the
-// site's own analytics alone -- it only blocks the pop-under ad networks.
+// FlareSolverr/Byparr can't handle:
+//  - pages that only reveal the link after a *click* (misterdonghua.in
+//    "Get Video" -> encrypted download API)
+//  - pages behind a Cloudflare Turnstile widget that never even renders in
+//    an automated browser (vik1ngfile) -- solved via CAPTCHA_API_KEY.
 //
 //   POST /resolve
-//   { "url": "https://misterdonghua.in/#<hash>&dl=1",
-//     "clickText": "Get Video",              // optional
-//     "resultSelector": "a[download], a[href*=\"/download?\"]", // optional
+//   { "url": "https://...",
+//     "clickText": "Get Video",              // optional; "" to skip
+//     "resultSelector": "a[download], a[href*=\"/download?\"]",  // optional
 //     "resultAttr": "href",                  // optional
-//     "timeoutMs": 45000,                    // optional
-//     "debug": false }                       // optional: include page text on failure
-//   -> 200 { "link": "https://...mp4...", "filename": "...", "elapsedMs": N }
+//     "solveCaptcha": true|false,            // optional; default: auto
+//     "timeoutMs": 45000, "debug": false }
+//   -> 200 { "link": "...", "filename": "...", "elapsedMs": N }
 //   -> 502 { "error": "...", "elapsedMs": N }
 
 const http = require('http');
 const { chromium } = require('playwright-extra');
 const stealth = require('puppeteer-extra-plugin-stealth')();
+const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER } = require('./captcha');
 
 chromium.use(stealth);
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const NAV_TIMEOUT = parseInt(process.env.NAV_TIMEOUT_MS || '45000', 10);
 
-// Pop-under / redirect ad networks only. NOT analytics -- misterdonghua
-// treats a blocked analytics request as "adblock detected" and refuses.
+// Pop-under / redirect ad networks only. NOT analytics -- some sites treat
+// a blocked analytics request as "adblock detected" and refuse.
 const BLOCK_HOSTS = (process.env.BLOCK_HOSTS ||
   'popads,popcash,propellerads,adsterra,exoclick,juicyads,admaven,' +
+  'onclickalgo,hilltopads,adnium,clickadu,heiscoquettef,' +
   'attirecideryeah,brigadedelegatesandbox,cacklegrievingtank,' +
-  'gigglemagnetismunaired,prahmnatured,aphacicfable,ukankingwithea,' +
-  'onclickalgo,hilltopads,adnium,clickadu,2mdn.net'
+  'gigglemagnetismunaired,prahmnatured,aphacicfable,ukankingwithea'
 ).split(',').map((s) => s.trim()).filter(Boolean);
 
 let browserPromise = null;
@@ -51,12 +52,77 @@ function getBrowser() {
   return browserPromise;
 }
 
+// Poll the page until the result selector holds a real off-site URL.
+function waitForLink(page, resultSelector, resultAttr, pageHost, timeoutMs) {
+  return page
+    .waitForFunction(
+      ([sel, attr, host]) => {
+        for (const node of document.querySelectorAll(sel)) {
+          const v = node.getAttribute(attr) || node[attr] || '';
+          if (!/^https?:\/\//i.test(v)) continue;
+          try {
+            if (new URL(v).host === host) continue;
+          } catch (e) {
+            continue;
+          }
+          return v;
+        }
+        return null;
+      },
+      [resultSelector, resultAttr, pageHost],
+      { timeout: timeoutMs, polling: 300 },
+    )
+    .then((h) => h.jsonValue());
+}
+
+// Pull the Turnstile sitekey (+ callback name) out of the page.
+function readTurnstileParams(page) {
+  return page.evaluate(() => {
+    const el = document.querySelector('[data-sitekey]');
+    if (el) {
+      return { sitekey: el.getAttribute('data-sitekey'), callback: el.getAttribute('data-callback') || null };
+    }
+    const html = document.documentElement.innerHTML;
+    const sk = html.match(/sitekey\s*[:=]\s*["']([0-9A-Za-z_-]{10,})["']/i);
+    const cb = html.match(/callback\s*[:=]\s*["']?([A-Za-z_$][\w$]*)/i);
+    return sk ? { sitekey: sk[1], callback: cb ? cb[1] : null } : null;
+  });
+}
+
+async function injectTurnstileToken(page, token, callbackName) {
+  await page.evaluate(
+    ([tok, cb]) => {
+      document.querySelectorAll(
+        'input[name="cf-turnstile-response"], input[name="g-recaptcha-response"], textarea[name="cf-turnstile-response"]',
+      ).forEach((n) => {
+        n.value = tok;
+        n.dispatchEvent(new Event('input', { bubbles: true }));
+        n.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      const fns = [];
+      if (cb && typeof window[cb] === 'function') fns.push(window[cb]);
+      if (typeof window.cloudflareCallback === 'function') fns.push(window.cloudflareCallback);
+      if (typeof window.turnstileCallback === 'function') fns.push(window.turnstileCallback);
+      if (typeof window.onCaptchaSuccess === 'function') fns.push(window.onCaptchaSuccess);
+      fns.forEach((f) => {
+        try {
+          f(tok);
+        } catch (e) {
+          /* ignore */
+        }
+      });
+    },
+    [token, callbackName],
+  );
+}
+
 async function resolve(opts) {
   const {
     url,
     clickText = 'Get Video',
-    resultSelector = 'a[download], a[href*="/download?"], a.vds-download-button',
+    resultSelector = 'a[download], a[href*="/download?"], a.vds-download-button, a#download-link[href], a[href*="/d/"]',
     resultAttr = 'href',
+    solveCaptcha,
     timeoutMs = NAV_TIMEOUT,
     debug = false,
   } = opts;
@@ -77,7 +143,6 @@ async function resolve(opts) {
 
   await context.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    // A couple of the cheaper headless tells.
     Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
     if (!window.chrome) window.chrome = { runtime: {} };
   });
@@ -89,7 +154,6 @@ async function resolve(opts) {
   });
 
   const page = await context.newPage();
-
   context.on('page', (p) => {
     if (p !== page) p.close().catch(() => {});
   });
@@ -97,52 +161,56 @@ async function resolve(opts) {
 
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    // Let the SPA hydrate.
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
 
     if (clickText) {
       const btn = page.getByText(clickText, { exact: false }).first();
-      await btn.waitFor({ state: 'visible', timeout: timeoutMs });
-      // These sites float an invisible ad <div> over the button so a normal
-      // click is intercepted. Fire the element's own handler directly.
-      await btn.evaluate((el) => el.click());
+      await btn.waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => {});
+      // An invisible ad <div> is often floated over the button.
+      await btn.evaluate((el) => el.click()).catch(() => {});
     }
 
-    const link = await page.waitForFunction(
-      ([sel, attr, host]) => {
-        for (const node of document.querySelectorAll(sel)) {
-          const v = node.getAttribute(attr) || node[attr] || '';
-          if (!/^https?:\/\//i.test(v)) continue;
-          try {
-            if (new URL(v).host === host) continue;
-          } catch (e) {
-            continue;
-          }
-          return v;
-        }
-        return null;
-      },
-      [resultSelector, resultAttr, pageHost],
-      { timeout: timeoutMs, polling: 300 },
-    ).then((h) => h.jsonValue());
-
-    let filename = null;
+    // First shot: maybe it's already there (misterdonghua after the click).
     try {
-      filename = (await page.title()) || null;
+      const link = await waitForLink(page, resultSelector, resultAttr, pageHost, Math.min(timeoutMs, 20000));
+      return { link, filename: (await page.title().catch(() => null)) || null };
     } catch (e) {
-      /* ignore */
+      /* fall through to captcha */
     }
 
-    return { link, filename };
+    // Second shot: is there a Turnstile gating the link?
+    const params = solveCaptcha === false ? null : await readTurnstileParams(page).catch(() => null);
+    if (params && params.sitekey) {
+      if (!captchaEnabled()) {
+        throw new Error(
+          `Cloudflare Turnstile is gating this link (sitekey ${params.sitekey}). ` +
+          'Set CAPTCHA_PROVIDER + CAPTCHA_API_KEY on page-resolver to solve it.',
+        );
+      }
+      const token = await solveTurnstile({
+        websiteURL: page.url(),
+        websiteKey: params.sitekey,
+        timeoutMs: Math.max(timeoutMs, 120000),
+      });
+      await injectTurnstileToken(page, token, params.callback);
+
+      if (clickText) {
+        await page.getByText(clickText, { exact: false }).first()
+          .evaluate((el) => el.click()).catch(() => {});
+      }
+
+      const link = await waitForLink(page, resultSelector, resultAttr, pageHost, timeoutMs);
+      return { link, filename: (await page.title().catch(() => null)) || null };
+    }
+
+    throw new Error('result selector never produced an off-site link');
   } catch (err) {
     if (debug) {
-      let text = '';
       try {
-        text = (await page.evaluate(() => document.body.innerText)).slice(0, 1500);
+        err.debugText = (await page.evaluate(() => document.body.innerText)).slice(0, 1500);
       } catch (e) {
         /* ignore */
       }
-      err.debugText = text;
     }
     throw err;
   } finally {
@@ -153,7 +221,7 @@ async function resolve(opts) {
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end('{"status":"ok"}');
+    return res.end(JSON.stringify({ status: 'ok', captcha: captchaEnabled() ? CAPTCHA_PROVIDER : false }));
   }
   if (req.method !== 'POST' || req.url !== '/resolve') {
     res.writeHead(404);
@@ -192,5 +260,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`page-resolver listening on :${PORT} (blocking ${BLOCK_HOSTS.length} ad hosts)`);
+  console.log(
+    `page-resolver on :${PORT} | captcha: ${captchaEnabled() ? CAPTCHA_PROVIDER : 'off'} | blocking ${BLOCK_HOSTS.length} ad hosts`,
+  );
 });

@@ -10,8 +10,9 @@
 
 services:
   page-resolver:
-    build:
-      context: "https://github.com/myths420/Sonarr.git#animesite-sites-catalogue:distribution/page-resolver"
+    # Prebuilt image (GitHub Actions builds distribution/page-resolver on
+    # every push to the branch). Dockge just pulls it -- no local build.
+    image: ghcr.io/myths420/sonarr-page-resolver:latest
     container_name: page-resolver
     restart: unless-stopped
     shm_size: 1gb          # Chromium crashes with the default 64 MB

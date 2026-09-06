@@ -22,17 +22,21 @@ namespace NzbDrone.Core.Indexers.AnimeSite
     {
         public string HeadlessUrl { get; set; }
         public AnimeSiteBrowserMode Mode { get; set; }
+        public IndexerSessionConfig Session { get; set; }
 
         public static readonly AnimeSiteFetchOptions Direct = new AnimeSiteFetchOptions();
 
         public bool UsesHeadless => Mode != AnimeSiteBrowserMode.Off && !string.IsNullOrWhiteSpace(HeadlessUrl);
+
+        public bool UsesSession => Session is { IsConfigured: true };
 
         public static AnimeSiteFetchOptions FromSettings(AnimeSiteSettings settings)
         {
             return new AnimeSiteFetchOptions
             {
                 HeadlessUrl = settings.HeadlessBrowserUrl,
-                Mode = (AnimeSiteBrowserMode)settings.HeadlessBrowserMode
+                Mode = (AnimeSiteBrowserMode)settings.HeadlessBrowserMode,
+                Session = IndexerSessionConfig.FromSettings(settings)
             };
         }
     }
@@ -49,11 +53,13 @@ namespace NzbDrone.Core.Indexers.AnimeSite
     public class AnimeSiteFetcher : IAnimeSiteFetcher
     {
         private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteSessionClient _sessionClient;
         private readonly Logger _logger;
 
-        public AnimeSiteFetcher(IHttpClient httpClient, Logger logger)
+        public AnimeSiteFetcher(IHttpClient httpClient, IAnimeSiteSessionClient sessionClient, Logger logger)
         {
             _httpClient = httpClient;
+            _sessionClient = sessionClient;
             _logger = logger;
         }
 
@@ -63,10 +69,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Always)
             {
-                return Headless(url, fetch) ?? Direct(url, referer);
+                return Headless(url, fetch) ?? Direct(url, referer, fetch);
             }
 
-            var html = Direct(url, referer);
+            var html = Direct(url, referer, fetch);
 
             if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Auto && LooksBlocked(html))
             {
@@ -77,8 +83,24 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return html;
         }
 
-        private string Direct(string url, string referer)
+        private string Direct(string url, string referer, AnimeSiteFetchOptions fetch)
         {
+            // A manually-synchronised browser session (pasted cf_clearance +
+            // User-Agent) needs its own HttpClient -- Sonarr's shared one
+            // can't send an un-prefixed User-Agent.
+            if (fetch.UsesSession)
+            {
+                try
+                {
+                    return _sessionClient.GetHtml(url, referer, fetch.Session);
+                }
+                catch (AnimeSiteSessionExpiredException)
+                {
+                    // Already logged + recorded for the health check.
+                    return string.Empty;
+                }
+            }
+
             try
             {
                 return _httpClient.Get(AnimeSiteHttp.BuildRequest(url, referer)).Content;

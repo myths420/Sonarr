@@ -89,6 +89,7 @@
   "AlternateTitles": "Alternate Titles",
   "Always": "Always",
   "AnEpisodeIsDownloading": "An Episode is downloading",
+  "AnimeSiteSessionExpiredHealthCheckMessage": "The imported browser session for {domains} was rejected (403). Copy a fresh cf_clearance cookie and matching User-Agent from your browser into the AnimeSite indexer.",
   "AnalyseVideoFiles": "Analyse video files",
   "AnalyseVideoFilesHelpText": "Extract video information such as resolution, runtime and codec information from files. This requires {appName} to read parts of the file which may cause high disk or network activity during scans.",
   "Analytics": "Analytics",

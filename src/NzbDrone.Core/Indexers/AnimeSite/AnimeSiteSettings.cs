@@ -230,6 +230,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         [FieldDefinition(14, Label = "Headless Browser Mode", Type = FieldType.Select, SelectOptions = typeof(AnimeSiteBrowserMode), Advanced = true, HelpText = "Off: never use it. Auto: fetch directly, fall back to the headless browser only when a page comes back as a Cloudflare challenge (recommended). Always: route every fetch for this site through the headless browser (slower).")]
         public int HeadlessBrowserMode { get; set; }
 
+        [FieldDefinition(15, Label = "Session Clearance Cookie", Type = FieldType.Textbox, Advanced = true, Privacy = PrivacyLevel.Password, HelpText = "Manual session sync -- an alternative to a headless browser for a Cloudflare-gated site. Clear the challenge once in a real browser, then paste its cf_clearance cookie here (the whole 'cf_clearance=...; ...' string is fine -- only cf_clearance is used). Must be paired with the exact User-Agent below. Expires after a while; the health check will tell you when to re-paste.")]
+        public string SessionClearanceCookie { get; set; }
+
+        [FieldDefinition(16, Label = "Session User-Agent", Type = FieldType.Textbox, Advanced = true, HelpText = "The exact User-Agent string of the browser you copied the clearance cookie from (about:version / DevTools > navigator.userAgent). Cloudflare ties cf_clearance to the User-Agent, so a mismatch here fails with 403.")]
+        public string SessionUserAgent { get; set; }
+
         // Parsed/derived helpers used by AnimeSiteIndexer when constructing
         // the parser -- kept here so the "how do I turn these text fields
         // into what the parser actually needs" logic lives next to the

@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading;
 using NLog;
 using NzbDrone.Common.EnsureThat;
-using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation;
 
@@ -19,12 +18,12 @@ namespace NzbDrone.Common.Disk
         {
             get
             {
-                if (OsInfo.IsWindows)
-                {
-                    return StringComparison.OrdinalIgnoreCase;
-                }
-
-                return StringComparison.Ordinal;
+                // This fork runs against case-insensitive volumes (WSL
+                // drvfs mounts of Windows drives), where the stock
+                // Linux-only case-sensitive path comparison lets a folder be
+                // added as a series twice under different casing. Treat
+                // paths as case-insensitive everywhere instead.
+                return StringComparison.OrdinalIgnoreCase;
             }
         }
 

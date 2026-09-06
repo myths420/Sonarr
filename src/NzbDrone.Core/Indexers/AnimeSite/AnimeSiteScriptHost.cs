@@ -93,6 +93,25 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
+        // host.post(url, body) -> response body ("" on failure). body is a
+        // url-encoded string (e.g. "a=1&b=2"). Routed through the headless
+        // browser (FlareSolverr request.post) whenever one is configured, so
+        // a POST that needs the Cloudflare-cleared browser session -- like a
+        // file host's "generate download link" endpoint -- runs in it.
+        public string Post(string url, string body)
+        {
+            try
+            {
+                var page = _fetcher.PostPage(url, body ?? string.Empty, _fetch);
+                return page.Html ?? "";
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Scraping script host.post() failed for {0}", url);
+                return "";
+            }
+        }
+
         // host.select(html, cssSelector) -> JSON array of {text, href, title}
         // for every matching element (missing attributes come back as "").
         public string Select(string html, string selector)

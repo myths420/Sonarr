@@ -59,6 +59,13 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         string GetHtml(string url, string referer, AnimeSiteFetchOptions fetch);
 
         AnimeSitePage GetPage(string url, string referer, AnimeSiteFetchOptions fetch);
+
+        // POST a url-encoded body. Routed through the headless browser
+        // (FlareSolverr request.post) whenever one is configured -- a POST
+        // that depends on a Cloudflare-cleared session (e.g. a file host's
+        // "give me the link" endpoint) has to run in the same browser
+        // context that cleared the challenge.
+        AnimeSitePage PostPage(string url, string postData, AnimeSiteFetchOptions fetch);
     }
 
     public class AnimeSiteFetcher : IAnimeSiteFetcher
@@ -146,16 +153,58 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
+        public AnimeSitePage PostPage(string url, string postData, AnimeSiteFetchOptions fetch)
+        {
+            fetch ??= AnimeSiteFetchOptions.Direct;
+
+            if (fetch.UsesHeadless)
+            {
+                var headless = Headless("request.post", url, postData ?? string.Empty, fetch);
+                if (headless != null)
+                {
+                    return headless;
+                }
+            }
+
+            try
+            {
+                var request = new HttpRequest(url) { Method = HttpMethod.Post, AllowAutoRedirect = true };
+                AnimeSiteHttp.ApplyBrowserHeaders(request, null);
+                request.Headers.ContentType = "application/x-www-form-urlencoded";
+                request.SetContent(postData ?? string.Empty);
+
+                var response = _httpClient.Execute(request);
+                return new AnimeSitePage
+                {
+                    Html = response.Content,
+                    FinalUrl = response.Request?.Url?.FullUri ?? url
+                };
+            }
+            catch (HttpException ex)
+            {
+                return new AnimeSitePage { Html = ex.Response?.Content ?? string.Empty, FinalUrl = url };
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "AnimeSite direct POST failed for {0}", url);
+                return new AnimeSitePage { FinalUrl = url };
+            }
+        }
+
         private AnimeSitePage Headless(string url, AnimeSiteFetchOptions fetch)
+        {
+            return Headless("request.get", url, null, fetch);
+        }
+
+        private AnimeSitePage Headless(string cmd, string url, string postData, AnimeSiteFetchOptions fetch)
         {
             try
             {
-                var body = JsonSerializer.Serialize(new
-                {
-                    cmd = "request.get",
-                    url,
-                    maxTimeout = 60000
-                });
+                object payload = string.Equals(cmd, "request.post", StringComparison.Ordinal)
+                    ? new { cmd, url, postData, maxTimeout = 60000 }
+                    : new { cmd, url, maxTimeout = 60000 };
+
+                var body = JsonSerializer.Serialize(payload);
 
                 var request = new HttpRequest(fetch.HeadlessUrl.TrimEnd('/')) { Method = HttpMethod.Post };
                 request.Headers.ContentType = "application/json";
@@ -169,7 +218,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
                 if (result?.Solution?.Response == null || !string.Equals(result.Status, "ok", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.Warn("Headless browser ({0}) returned no solution for {1}: {2}", fetch.HeadlessUrl, url, result?.Message);
+                    _logger.Warn("Headless browser ({0}) returned no solution for {1} ({2}): {3}", fetch.HeadlessUrl, url, cmd, result?.Message);
                     return null;
                 }
 

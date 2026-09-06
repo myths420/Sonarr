@@ -1,0 +1,14 @@
+# Keep the build context small / reproducible for Dockerfile.custom.
+# (.git is kept -- the backend build reads the revision for versioning.)
+.github
+_output
+_tests
+**/bin
+**/obj
+node_modules
+**/node_modules
+distribution/page-resolver
+*.md
+!README.md
+sonarr-test-config
+docker-compose.yml

@@ -185,7 +185,12 @@ namespace NzbDrone.Core.AnimeSite
 
                     if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))
                     {
-                        throw new HttpException(request, response, "Site responded with html content.");
+                        var host = new Uri(sourceUrl).Host.ToLowerInvariant();
+                        var isCaptchaHost = host.Contains("vikingfile") || host.Contains("vik1ngfile");
+
+                        throw new HttpException(request, response, isCaptchaHost
+                            ? $"{host} serves the file behind a captcha and can't be downloaded automatically -- open the link in a browser, solve it, download the file yourself and drop it in the series folder (a rescan will import it)."
+                            : "The download link returned a web page, not a file -- the release probably needs a landing-page resolution rule this indexer doesn't have.");
                     }
 
                     if (download.TotalSize == 0)

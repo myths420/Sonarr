@@ -178,8 +178,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             LinkResolutionRules = "[{\"hostContains\":\"mediafire.com\",\"resolveSelector\":\"a#downloadButton[href], a.input.popsok[href]\"},{\"hostContains\":\"mirrored.to\",\"urlReplaceFrom\":\"dl=0\",\"urlReplaceTo\":\"dl=1\"}]";
             MultiLanguages = Array.Empty<int>();
             FailDownloads = Array.Empty<int>();
-            CatalogueScript = NzbDrone.Core.ImportLists.AnimeSite.AnimeSiteImportListSettings.DefaultScrapingScript;
-            CatalogueMaxPages = 3;
+
+            // Left empty on purpose -- an empty Catalogue Script means "use
+            // the current built-in default" (AnimeSiteCatalogueOptions.
+            // FromIndexer), so improvements to that default are picked up
+            // without every saved indexer carrying a stale copy.
         }
 
         [FieldDefinition(0, Label = "Website URL", HelpText = "The site to search, e.g. https://animexin.dev or https://donghuaworld.com")]

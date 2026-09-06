@@ -86,16 +86,24 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
   var out = [];
   if (!xml) { host.log('anime-sitemap.xml returned nothing'); return JSON.stringify(out); }
   var re = /<loc>\s*([^<]+?)\s*<\/loc>/g, m;
+  var skip = { '': 1, 'anime': 1, 'anime-sitemap': 1, 'category': 1, 'genre': 1, 'genres': 1, 'season': 1, 'page': 1, 'tag': 1, 'network': 1, 'type': 1, 'studio': 1, 'schedule': 1, 'ongoing': 1, 'completed': 1 };
+  var seen = {};
   while ((m = re.exec(xml)) !== null) {
-    var mm = m[1].match(/^https?:\/\/[^\/]+\/([^\/]+)\/?$/);
-    if (!mm) { continue; }
-    var slug = mm[1];
-    if (slug === 'anime' || slug === '') { continue; }
+    var url = m[1];
+    // Take the last path segment as the slug -- handles both /{slug}/
+    // (animexin) and /anime/{slug}/ (donghuastream, etc).
+    var pm = url.match(/^https?:\/\/[^\/]+\/(.+?)\/?$/);
+    if (!pm) { continue; }
+    var segs = pm[1].split('/');
+    var slug = segs[segs.length - 1];
+    if (skip[slug.toLowerCase()] || slug.indexOf('-episode-') !== -1) { continue; }
+    if (seen[url]) { continue; }
+    seen[url] = 1;
     var title = slug.replace(/-/g, ' ')
                     .replace(/\s+/g, ' ')
                     .replace(/\b\w/g, function (c) { return c.toUpperCase(); })
                     .trim();
-    out.push({ title: title, url: m[1] });
+    out.push({ title: title, url: url });
   }
   host.log('anime-sitemap.xml yielded ' + out.length + ' shows');
   return JSON.stringify(out);

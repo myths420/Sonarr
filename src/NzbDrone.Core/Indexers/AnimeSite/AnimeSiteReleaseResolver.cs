@@ -80,14 +80,21 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         {
             var releases = new List<ResolvedRelease>();
             var host = new AnimeSiteScriptHost(_fetcher, options.Fetch, logger);
+            var allowedHostsJson = JsonSerializer.Serialize(options.DirectDownloadHosts ?? System.Array.Empty<string>());
 
             try
             {
-                var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromSeconds(30)));
+                // Generous timeout: a script that follows landing-page hops
+                // through a headless browser can spend several seconds per
+                // fetch, and this only runs on a user-initiated resolve.
+                var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromSeconds(120)));
                 engine.SetValue("host", host);
                 engine.Execute(options.ScrapingScript);
 
-                var json = engine.Invoke("getReleases", episodeHtml, episodeUrl, seriesTitle, episodeNumber).AsString();
+                // arg 5 (allowedHosts) added so a script can honour the
+                // indexer's Direct Download Hosts field instead of
+                // hard-coding the list; older 4-arg scripts ignore it.
+                var json = engine.Invoke("getReleases", episodeHtml, episodeUrl, seriesTitle, episodeNumber, allowedHostsJson).AsString();
                 var scriptReleases = JsonSerializer.Deserialize<List<ResolvedRelease>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<ResolvedRelease>();
 
                 foreach (var sr in scriptReleases)

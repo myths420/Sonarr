@@ -85,11 +85,25 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
   var xml = host.get(baseUrl + '/anime-sitemap.xml');
   var out = [];
   if (!xml) { host.log('anime-sitemap.xml returned nothing'); return JSON.stringify(out); }
-  var re = /<loc>\s*([^<]+?)\s*<\/loc>/g, m;
   var skip = { '': 1, 'anime': 1, 'anime-sitemap': 1, 'category': 1, 'genre': 1, 'genres': 1, 'season': 1, 'page': 1, 'tag': 1, 'network': 1, 'type': 1, 'studio': 1, 'schedule': 1, 'ongoing': 1, 'completed': 1 };
   var seen = {};
-  while ((m = re.exec(xml)) !== null) {
-    var url = m[1];
+
+  var urls = [];
+  var re = /<loc>\s*([^<]+?)\s*<\/loc>/g, m;
+  while ((m = re.exec(xml)) !== null) { urls.push(m[1]); }
+
+  // A headless browser (FlareSolverr) hands the sitemap back already
+  // rendered by its XSL stylesheet -- an HTML table, no <loc> tags. Fall
+  // back to the <a href> links in that table.
+  if (urls.length === 0) {
+    var links = JSON.parse(host.select(xml, 'a[href]'));
+    for (var j = 0; j < links.length; j++) {
+      if (/^https?:\/\//.test(links[j].href)) { urls.push(links[j].href); }
+    }
+  }
+
+  for (var i = 0; i < urls.length; i++) {
+    var url = urls[i];
     // Take the last path segment as the slug -- handles both /{slug}/
     // (animexin) and /anime/{slug}/ (donghuastream, etc).
     var pm = url.match(/^https?:\/\/[^\/]+\/(.+?)\/?$/);

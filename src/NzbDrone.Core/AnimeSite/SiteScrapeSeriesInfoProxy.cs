@@ -1,0 +1,166 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
+using NLog;
+using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.ImportLists;
+using NzbDrone.Core.ImportLists.AnimeSite;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.Tv;
+
+namespace NzbDrone.Core.AnimeSite
+{
+    // Builds Sonarr's Series/Episode shape straight from a catalogue show
+    // and its scraped episode list -- the fallback when AniList has no
+    // match for the show, so downloading from *any* site show still lands
+    // it in the Series tab. SkyHookProxy.GetSeriesInfo delegates here for
+    // ids in the SiteSeriesIds band.
+    public interface ISiteScrapeSeriesInfoProxy
+    {
+        Tuple<Series, List<Episode>> GetSeriesInfo(int siteShowId);
+    }
+
+    public class SiteScrapeSeriesInfoProxy : ISiteScrapeSeriesInfoProxy
+    {
+        private static readonly Regex DateInTitle = new Regex(
+            @"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private readonly ISiteShowRepository _siteShowRepository;
+        private readonly IImportListFactory _importListFactory;
+        private readonly IAnimeSiteCatalogBrowser _catalogBrowser;
+        private readonly Logger _logger;
+
+        public SiteScrapeSeriesInfoProxy(ISiteShowRepository siteShowRepository,
+                                         IImportListFactory importListFactory,
+                                         IAnimeSiteCatalogBrowser catalogBrowser,
+                                         Logger logger)
+        {
+            _siteShowRepository = siteShowRepository;
+            _importListFactory = importListFactory;
+            _catalogBrowser = catalogBrowser;
+            _logger = logger;
+        }
+
+        public Tuple<Series, List<Episode>> GetSeriesInfo(int siteShowId)
+        {
+            var show = _siteShowRepository.Get(siteShowId);
+            if (show == null)
+            {
+                throw new SeriesNotFoundException(SiteSeriesIds.FromSiteShowId(siteShowId));
+            }
+
+            var series = MapSeries(show);
+            var episodes = MapEpisodes(show);
+
+            return new Tuple<Series, List<Episode>>(series, episodes);
+        }
+
+        private Series MapSeries(SiteShow show)
+        {
+            var title = string.IsNullOrWhiteSpace(show.Title) ? $"Site show {show.Id}" : show.Title;
+
+            var series = new Series
+            {
+                TvdbId = SiteSeriesIds.FromSiteShowId(show.Id),
+                Title = title,
+                CleanTitle = Parser.Parser.CleanSeriesTitle(title),
+                SortTitle = SeriesTitleNormalizer.Normalize(title, 0),
+                TitleSlug = $"site-{show.Id}",
+                Overview = show.Overview,
+                Status = MapStatus(show.Status),
+                Network = "AnimeSite",
+                Runtime = 24,
+                SeriesType = SeriesTypes.Anime,
+                Year = show.Year,
+                Genres = string.IsNullOrWhiteSpace(show.Genres)
+                    ? new List<string>()
+                    : show.Genres.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(g => g.Trim()).ToList(),
+                Seasons = new List<Season> { new Season { SeasonNumber = 1, Monitored = true } },
+                Images = new List<MediaCover.MediaCover>(),
+                Ratings = new Ratings(),
+                Monitored = true
+            };
+
+            if (Uri.TryCreate(show.PosterUrl, UriKind.Absolute, out _))
+            {
+                series.Images.Add(new MediaCover.MediaCover(MediaCoverTypes.Poster, show.PosterUrl));
+            }
+
+            if (show.Year > 0)
+            {
+                series.FirstAired = new DateTime(show.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            }
+
+            return series;
+        }
+
+        private List<Episode> MapEpisodes(SiteShow show)
+        {
+            List<AnimeSiteEpisodeEntry> entries;
+
+            try
+            {
+                var settings = (AnimeSiteImportListSettings)_importListFactory.Get(show.SourceListId).Settings;
+                entries = _catalogBrowser.BrowseEpisodes(settings, show.Url, _logger);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Couldn't scrape episode list for '{0}' -- adding series with no episodes", show.Title);
+                entries = new List<AnimeSiteEpisodeEntry>();
+            }
+
+            return entries
+                .Where(e => e.Number > 0)
+                .GroupBy(e => e.Number)
+                .Select(g => g.First())
+                .OrderBy(e => e.Number)
+                .Select(e =>
+                {
+                    var airDate = ParseAirDate(e.Title);
+
+                    return new Episode
+                    {
+                        SeasonNumber = 1,
+                        EpisodeNumber = e.Number,
+                        AbsoluteEpisodeNumber = e.Number,
+                        Title = string.IsNullOrWhiteSpace(e.Title) ? $"Episode {e.Number}" : e.Title,
+                        AirDate = airDate?.ToString(Episode.AIR_DATE_FORMAT),
+                        AirDateUtc = airDate,
+                        Monitored = true
+                    };
+                })
+                .ToList();
+        }
+
+        private static DateTime? ParseAirDate(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return null;
+            }
+
+            var match = DateInTitle.Match(title);
+            if (match.Success &&
+                DateTime.TryParse(match.Value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var date))
+            {
+                return date;
+            }
+
+            return null;
+        }
+
+        private static SeriesStatusType MapStatus(string status)
+        {
+            var s = (status ?? string.Empty).ToUpperInvariant();
+            if (s.Contains("FINISH") || s.Contains("COMPLETE") || s.Contains(" END"))
+            {
+                return SeriesStatusType.Ended;
+            }
+
+            return SeriesStatusType.Continuing;
+        }
+    }
+}

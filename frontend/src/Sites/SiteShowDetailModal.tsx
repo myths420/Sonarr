@@ -20,6 +20,7 @@ import SiteShow from './SiteShow';
 import styles from './SiteShowDetailModal.css';
 import useSiteDownloads, { useDownloadEpisodes } from './useSiteDownloads';
 import useSiteShowEpisodes, { useEpisodeReleases } from './useSiteShowEpisodes';
+import { useSiteShow } from './useSiteShows';
 
 interface SiteShowDetailModalProps {
   isOpen: boolean;
@@ -100,9 +101,14 @@ function EpisodeReleases({
 // (see ISiteShowService.ResolveEpisodeReleases).
 function SiteShowDetailModal({
   isOpen,
-  show,
+  show: initialShow,
   onModalClose,
 }: SiteShowDetailModalProps) {
+  // Kept fresh while open so "Open in Sonarr" appears within a few seconds
+  // of a download starting (which auto-creates the series).
+  const { data: freshShow } = useSiteShow(initialShow.id, isOpen);
+  const show = freshShow ?? initialShow;
+
   const { title, overview, year, episodes, status, genres, posterUrl, url } =
     show;
 

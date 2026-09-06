@@ -320,13 +320,13 @@ namespace NzbDrone.Core.AnimeSite
                 aniListId = _metadataProvider.Lookup(show.Title)?.AniListId ?? 0;
             }
 
-            if (aniListId <= 0)
-            {
-                throw new SiteSeriesAddException(
-                    $"'{show.Title}' has no AniList match yet, so a tracked series (with episode air dates) can't be created. Try again after the next metadata refresh.");
-            }
-
-            var syntheticId = AniListSeriesIds.FromAniListId(aniListId);
+            // Prefer an AniList-backed series (real air dates, richer
+            // metadata); otherwise fall back to a series built from the
+            // site's own title + scraped episode list, so downloading from
+            // *any* catalogue show still lands it in the Series tab.
+            var syntheticId = aniListId > 0
+                ? AniListSeriesIds.FromAniListId(aniListId)
+                : SiteSeriesIds.FromSiteShowId(show.Id);
 
             var existing = _seriesService.FindByTvdbId(syntheticId);
             if (existing != null)
@@ -341,7 +341,7 @@ namespace NzbDrone.Core.AnimeSite
             var newSeries = new Series
             {
                 TvdbId = syntheticId,
-                AniListIds = new HashSet<int> { aniListId },
+                AniListIds = aniListId > 0 ? new HashSet<int> { aniListId } : new HashSet<int>(),
                 QualityProfileId = resolvedProfile,
                 RootFolderPath = resolvedRoot,
                 SeasonFolder = true,
@@ -357,7 +357,8 @@ namespace NzbDrone.Core.AnimeSite
             };
 
             var added = _addSeriesService.AddSeries(newSeries);
-            _logger.Info("Added site show '{0}' as AniList-backed series {1} (anilist:{2})", show.Title, added.Id, aniListId);
+            var backing = aniListId > 0 ? $"anilist:{aniListId}" : $"site-scrape:{show.Id}";
+            _logger.Info("Added site show '{0}' as series {1} ({2})", show.Title, added.Id, backing);
 
             return added;
         }

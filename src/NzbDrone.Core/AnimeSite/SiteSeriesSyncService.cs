@@ -35,12 +35,12 @@ namespace NzbDrone.Core.AnimeSite
         public void Execute(SiteSeriesSyncCommand message)
         {
             var aniListSeries = _seriesService.GetAllSeries()
-                .Where(s => AniListSeriesIds.IsAniListId(s.TvdbId) && s.Monitored)
+                .Where(s => s.Monitored && (AniListSeriesIds.IsAniListId(s.TvdbId) || SiteSeriesIds.IsSiteId(s.TvdbId)))
                 .ToList();
 
             if (aniListSeries.Count == 0)
             {
-                _logger.Debug("No monitored AniList-backed series to sync");
+                _logger.Debug("No monitored Site/AniList-backed series to sync");
                 return;
             }
 

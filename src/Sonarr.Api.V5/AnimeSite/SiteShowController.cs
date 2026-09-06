@@ -66,6 +66,7 @@ public class SiteShowController : Controller
 
         var seriesByCleanTitle = new Dictionary<string, NzbDrone.Core.Tv.Series>();
         var seriesByAniListId = new Dictionary<int, NzbDrone.Core.Tv.Series>();
+        var seriesBySiteShowId = new Dictionary<int, NzbDrone.Core.Tv.Series>();
         foreach (var series in _seriesService.GetAllSeries())
         {
             var clean = series.Title.CleanSeriesTitle();
@@ -78,17 +79,27 @@ public class SiteShowController : Controller
             {
                 seriesByAniListId.TryAdd(aniListId, series);
             }
+
+            if (SiteSeriesIds.IsSiteId(series.TvdbId))
+            {
+                seriesBySiteShowId.TryAdd(SiteSeriesIds.ToSiteShowId(series.TvdbId), series);
+            }
         }
 
         foreach (var resource in resources)
         {
             NzbDrone.Core.Tv.Series? series = null;
 
-            // AniList id is the reliable link for series this fork added from
-            // the catalogue (their Sonarr title comes from AniList and may
-            // not match the site's title). Fall back to a cleaned-title match
-            // for series added by hand / from TheTVDB.
-            if (resource.AniListId > 0)
+            // Exact links first: the site-show id (scrape-backed series) or
+            // the AniList id (AniList-backed). Their Sonarr title comes from
+            // AniList / the site and may not match, so fall back to a
+            // cleaned-title match only for hand-added / TheTVDB series.
+            if (seriesBySiteShowId.TryGetValue(resource.Id, out var siteSeries))
+            {
+                series = siteSeries;
+            }
+
+            if (series == null && resource.AniListId > 0)
             {
                 seriesByAniListId.TryGetValue(resource.AniListId, out series);
             }

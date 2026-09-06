@@ -143,6 +143,7 @@ namespace NzbDrone.Core.MetadataSource.AniList
                 Genres = media.Genres ?? new List<string>(),
                 Seasons = new List<Season> { new Season { SeasonNumber = 1, Monitored = true } },
                 Images = new List<MediaCover.MediaCover>(),
+                Ratings = new Ratings(),
                 Monitored = true
             };
 

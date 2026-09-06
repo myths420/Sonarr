@@ -8,6 +8,7 @@ using NzbDrone.Common.Cloud;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.AnimeSite;
 using NzbDrone.Core.DataAugmentation.DailySeries;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Languages;
@@ -26,6 +27,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         private readonly ISeriesService _seriesService;
         private readonly IDailySeriesService _dailySeriesService;
         private readonly IAniListSeriesInfoProxy _aniListSeriesInfoProxy;
+        private readonly ISiteScrapeSeriesInfoProxy _siteScrapeSeriesInfoProxy;
         private readonly IHttpRequestBuilderFactory _requestBuilder;
 
         public SkyHookProxy(IHttpClient httpClient,
@@ -33,6 +35,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                             ISeriesService seriesService,
                             IDailySeriesService dailySeriesService,
                             IAniListSeriesInfoProxy aniListSeriesInfoProxy,
+                            ISiteScrapeSeriesInfoProxy siteScrapeSeriesInfoProxy,
                             Logger logger)
         {
             _httpClient = httpClient;
@@ -41,6 +44,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             _seriesService = seriesService;
             _dailySeriesService = dailySeriesService;
             _aniListSeriesInfoProxy = aniListSeriesInfoProxy;
+            _siteScrapeSeriesInfoProxy = siteScrapeSeriesInfoProxy;
             _requestBuilder = requestBuilder.SkyHookTvdb;
         }
 
@@ -52,6 +56,13 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             if (AniListSeriesIds.IsAniListId(tvdbSeriesId))
             {
                 return _aniListSeriesInfoProxy.GetSeriesInfo(AniListSeriesIds.ToAniListId(tvdbSeriesId));
+            }
+
+            // Catalogue show with no AniList match -- built from the site's
+            // own title + scraped episode list.
+            if (SiteSeriesIds.IsSiteId(tvdbSeriesId))
+            {
+                return _siteScrapeSeriesInfoProxy.GetSeriesInfo(SiteSeriesIds.ToSiteShowId(tvdbSeriesId));
             }
 
             var httpRequest = _requestBuilder.Create()

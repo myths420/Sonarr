@@ -60,7 +60,9 @@ export const useDownloadEpisodes = (showId: number) => {
         queryClient.invalidateQueries({ queryKey: ['/sitedownload'] });
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : 'Failed to start one or more downloads'
+          e instanceof Error
+            ? e.message
+            : 'Failed to start one or more downloads'
         );
       } finally {
         setIsDownloading(false);

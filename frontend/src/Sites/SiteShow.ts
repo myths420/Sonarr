@@ -17,6 +17,10 @@ export interface SiteShow extends ModelBase {
   // Set when a Sonarr series with a matching title is already in the library.
   seriesId?: number;
   seriesTitleSlug?: string;
+
+  // Episode progress for the linked series (all seasons).
+  seriesEpisodeFileCount?: number;
+  seriesEpisodeCount?: number;
 }
 
 export default SiteShow;

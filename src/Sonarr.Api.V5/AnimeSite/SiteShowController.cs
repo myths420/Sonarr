@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.AnimeSite;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.SeriesStats;
 using NzbDrone.Core.Tv;
 using Sonarr.Http;
 
@@ -14,16 +15,19 @@ public class SiteShowController : Controller
     private readonly ISiteDownloadService _siteDownloadService;
     private readonly ISiteShowPosterService _posterService;
     private readonly ISeriesService _seriesService;
+    private readonly ISeriesStatisticsService _seriesStatisticsService;
 
     public SiteShowController(ISiteShowService siteShowService,
                              ISiteDownloadService siteDownloadService,
                              ISiteShowPosterService posterService,
-                             ISeriesService seriesService)
+                             ISeriesService seriesService,
+                             ISeriesStatisticsService seriesStatisticsService)
     {
         _siteShowService = siteShowService;
         _siteDownloadService = siteDownloadService;
         _posterService = posterService;
         _seriesService = seriesService;
+        _seriesStatisticsService = seriesStatisticsService;
     }
 
     [HttpGet]
@@ -59,6 +63,8 @@ public class SiteShowController : Controller
         {
             return;
         }
+
+        var statsBySeriesId = _seriesStatisticsService.SeriesStatistics().ToDictionary(s => s.SeriesId);
 
         var seriesByCleanTitle = new Dictionary<string, NzbDrone.Core.Tv.Series>();
         var seriesByAniListId = new Dictionary<int, NzbDrone.Core.Tv.Series>();
@@ -118,6 +124,12 @@ public class SiteShowController : Controller
             {
                 resource.SeriesId = series.Id;
                 resource.SeriesTitleSlug = series.TitleSlug;
+
+                if (statsBySeriesId.TryGetValue(series.Id, out var stats))
+                {
+                    resource.SeriesEpisodeFileCount = stats.EpisodeFileCount;
+                    resource.SeriesEpisodeCount = stats.EpisodeCount;
+                }
             }
         }
     }

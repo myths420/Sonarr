@@ -2,19 +2,16 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   height: 100%;
   border: 1px solid var(--borderColor);
   border-radius: 4px;
   background-color: var(--defaultColor);
-  overflow: hidden;
 }
 
 .underlay {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  inset: 0;
   z-index: 1;
   padding: 0;
   border: none;
@@ -25,8 +22,8 @@
 
 .posterContainer {
   position: relative;
-  width: 100%;
   padding-top: 140%;
+  width: 100%;
   background-color: var(--tableRowHoverBackgroundColor);
 }
 
@@ -44,10 +41,10 @@
   top: 0;
   left: 0;
   display: flex;
-  width: 100%;
-  height: 100%;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  height: 100%;
   color: var(--disabledColor);
 }
 
@@ -56,19 +53,20 @@
 }
 
 .title {
-  font-size: 14px;
   font-weight: bold;
+  font-size: 14px;
   line-height: 1.3;
 }
 
 .year {
-  font-weight: normal;
   color: var(--disabledColor);
+  font-weight: normal;
 }
 
 .labels {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+
   margin-top: 6px;
 }

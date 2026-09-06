@@ -56,12 +56,22 @@ function SiteShowCard({ show }: SiteShowCardProps) {
 
         <div className={styles.labels}>
           {show.seriesId ? (
-            <Label kind={kinds.SUCCESS} size={sizes.SMALL}>
-              {translate('SitesInLibrary')}
+            <Label
+              kind={
+                (show.seriesEpisodeCount ?? 0) > 0 &&
+                (show.seriesEpisodeFileCount ?? 0) >= (show.seriesEpisodeCount ?? 0)
+                  ? kinds.SUCCESS
+                  : kinds.WARNING
+              }
+              size={sizes.SMALL}
+            >
+              {(show.seriesEpisodeCount ?? 0) > 0
+                ? `${show.seriesEpisodeFileCount ?? 0}/${show.seriesEpisodeCount}`
+                : translate('SitesInLibrary')}
             </Label>
           ) : null}
 
-          {episodes ? (
+          {!show.seriesId && episodes ? (
             <Label size={sizes.SMALL}>{episodes} eps</Label>
           ) : null}
 

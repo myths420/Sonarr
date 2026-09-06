@@ -16,16 +16,83 @@ import { InputChanged } from 'typings/inputs';
 import formatBytes from 'Utilities/Number/formatBytes';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
+import SiteDownload from './SiteDownload';
 import SiteShow from './SiteShow';
-import styles from './SiteShowDetailModal.css';
+import SiteShowRelease from './SiteShowRelease';
 import useSiteDownloads, { useDownloadEpisodes } from './useSiteDownloads';
 import useSiteShowEpisodes, { useEpisodeReleases } from './useSiteShowEpisodes';
 import { useSiteShow } from './useSiteShows';
+import styles from './SiteShowDetailModal.css';
+
+function progressPercent(download: SiteDownload) {
+  if (download.totalSize > 0) {
+    return Math.min(100, (download.bytesDownloaded / download.totalSize) * 100);
+  }
+
+  return download.status === 'Completed' ? 100 : 0;
+}
+
+function progressKind(download: SiteDownload) {
+  if (download.status === 'Failed') {
+    return kinds.DANGER;
+  }
+
+  if (download.status === 'Completed') {
+    return kinds.SUCCESS;
+  }
+
+  return kinds.PRIMARY;
+}
+
+function progressText(download: SiteDownload) {
+  if (download.status !== 'Downloading') {
+    return download.message || download.status;
+  }
+
+  const speed =
+    download.bytesPerSecond > 0
+      ? ` · ${formatBytes(download.bytesPerSecond)}/s`
+      : '';
+
+  return `${formatBytes(download.bytesDownloaded)}${speed}`;
+}
 
 interface SiteShowDetailModalProps {
   isOpen: boolean;
   show: SiteShow;
   onModalClose: () => void;
+}
+
+interface ReleaseRowProps {
+  release: SiteShowRelease;
+  episodeNumber: number;
+  isDownloading: boolean;
+  onDownload: (episodeNumber: number, releaseUrl: string) => void;
+}
+
+function ReleaseRow({
+  release,
+  episodeNumber,
+  isDownloading,
+  onDownload,
+}: ReleaseRowProps) {
+  const handleDownload = useCallback(() => {
+    onDownload(episodeNumber, release.url);
+  }, [onDownload, episodeNumber, release.url]);
+
+  return (
+    <li className={styles.release}>
+      <span className={styles.releaseTitle}>{release.title}</span>
+      <Button
+        kind={kinds.PRIMARY}
+        size={sizes.SMALL}
+        isDisabled={isDownloading}
+        onPress={handleDownload}
+      >
+        {translate('Download')}
+      </Button>
+    </li>
+  );
 }
 
 interface EpisodeReleasesProps {
@@ -42,11 +109,11 @@ function EpisodeReleases({
   isDownloading,
   onDownload,
 }: EpisodeReleasesProps) {
-  const { data: releases, isFetching, error } = useEpisodeReleases(
-    showId,
-    episodeNumber,
-    true
-  );
+  const {
+    data: releases,
+    isFetching,
+    error,
+  } = useEpisodeReleases(showId, episodeNumber, true);
 
   if (isFetching) {
     return (
@@ -77,19 +144,92 @@ function EpisodeReleases({
   return (
     <ul className={styles.releaseList}>
       {releases.map((release) => (
-        <li key={release.url} className={styles.release}>
-          <span className={styles.releaseTitle}>{release.title}</span>
+        <ReleaseRow
+          key={release.url}
+          release={release}
+          episodeNumber={episodeNumber}
+          isDownloading={isDownloading}
+          onDownload={onDownload}
+        />
+      ))}
+    </ul>
+  );
+}
+
+interface EpisodeRowProps {
+  showId: number;
+  episodeNumber: number;
+  episodeTitle: string;
+  download?: SiteDownload;
+  isReleasesOpen: boolean;
+  isDownloading: boolean;
+  onToggleReleases: (episodeNumber: number) => void;
+  onDownload: (episodeNumber: number) => void;
+  onReleaseDownload: (episodeNumber: number, releaseUrl: string) => void;
+}
+
+function EpisodeRow({
+  showId,
+  episodeNumber,
+  episodeTitle,
+  download,
+  isReleasesOpen,
+  isDownloading,
+  onToggleReleases,
+  onDownload,
+  onReleaseDownload,
+}: EpisodeRowProps) {
+  const handleToggle = useCallback(() => {
+    onToggleReleases(episodeNumber);
+  }, [onToggleReleases, episodeNumber]);
+
+  const handleDownload = useCallback(() => {
+    onDownload(episodeNumber);
+  }, [onDownload, episodeNumber]);
+
+  return (
+    <li className={styles.episode}>
+      <span className={styles.episodeNumber}>{episodeNumber}</span>
+      <div className={styles.episodeMain}>
+        <span>{episodeTitle}</span>
+
+        <div className={styles.episodeActions}>
+          <Button size={sizes.SMALL} onPress={handleToggle}>
+            {translate('Search')}
+          </Button>
           <Button
             kind={kinds.PRIMARY}
             size={sizes.SMALL}
             isDisabled={isDownloading}
-            onPress={() => onDownload(episodeNumber, release.url)}
+            onPress={handleDownload}
           >
             {translate('Download')}
           </Button>
-        </li>
-      ))}
-    </ul>
+        </div>
+
+        {isReleasesOpen ? (
+          <EpisodeReleases
+            showId={showId}
+            episodeNumber={episodeNumber}
+            isDownloading={isDownloading}
+            onDownload={onReleaseDownload}
+          />
+        ) : null}
+
+        {download ? (
+          <div className={styles.episodeProgress}>
+            <ProgressBar
+              progress={progressPercent(download)}
+              kind={progressKind(download)}
+              size={sizes.SMALL}
+            />
+            <span className={styles.episodeProgressText}>
+              {progressText(download)}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </li>
   );
 }
 
@@ -123,6 +263,7 @@ function SiteShowDetailModal({
       .filter((d) => d.showId === show.id)
       .forEach((d) => {
         const existing = map.get(d.episodeNumber);
+
         // Keep the most recent per episode.
         if (!existing || d.startedAt > existing.startedAt) {
           map.set(d.episodeNumber, d);
@@ -151,8 +292,8 @@ function SiteShowDetailModal({
   );
 
   const handleDownloadPress = useCallback(() => {
-    const startNum = parseInt(start, 10) || 1;
-    const endNum = parseInt(end, 10) || Math.max(...availableNumbers, startNum);
+    const startNum = Number(start) || 1;
+    const endNum = Number(end) || Math.max(...availableNumbers, startNum);
     const range = availableNumbers.filter((n) => n >= startNum && n <= endNum);
 
     if (range.length > 0) {
@@ -277,84 +418,20 @@ function SiteShowDetailModal({
 
               {!isFetching && episodeList.length > 0 ? (
                 <ul className={styles.episodeList}>
-                  {episodeList.map((episode) => {
-                    const download = downloadsByEpisode.get(episode.number);
-                    const progress =
-                      download && download.totalSize > 0
-                        ? Math.min(
-                            100,
-                            (download.bytesDownloaded / download.totalSize) * 100
-                          )
-                        : download?.status === 'Completed'
-                          ? 100
-                          : 0;
-
-                    return (
-                      <li key={episode.number} className={styles.episode}>
-                        <span className={styles.episodeNumber}>
-                          {episode.number}
-                        </span>
-                        <div className={styles.episodeMain}>
-                          <span>{episode.title}</span>
-
-                          <div className={styles.episodeActions}>
-                            <Button
-                              size={sizes.SMALL}
-                              onPress={() =>
-                                handleToggleReleases(episode.number)
-                              }
-                            >
-                              {translate('Search')}
-                            </Button>
-                            <Button
-                              kind={kinds.PRIMARY}
-                              size={sizes.SMALL}
-                              isDisabled={isDownloading}
-                              onPress={() => downloadEpisode(episode.number)}
-                            >
-                              {translate('Download')}
-                            </Button>
-                          </div>
-
-                          {openReleases === episode.number ? (
-                            <EpisodeReleases
-                              showId={show.id}
-                              episodeNumber={episode.number}
-                              isDownloading={isDownloading}
-                              onDownload={handleReleaseDownload}
-                            />
-                          ) : null}
-
-                          {download ? (
-                            <div className={styles.episodeProgress}>
-                              <ProgressBar
-                                progress={progress}
-                                kind={
-                                  download.status === 'Failed'
-                                    ? kinds.DANGER
-                                    : download.status === 'Completed'
-                                      ? kinds.SUCCESS
-                                      : kinds.PRIMARY
-                                }
-                                size={sizes.SMALL}
-                              />
-                              <span className={styles.episodeProgressText}>
-                                {download.status === 'Downloading'
-                                  ? `${formatBytes(download.bytesDownloaded)}${
-                                      download.bytesPerSecond > 0
-                                        ? ` · ${formatBytes(
-                                            download.bytesPerSecond
-                                          )}/s`
-                                        : ''
-                                    }`
-                                  : download.message || download.status}
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
-                      </li>
-                    );
-                  })}
+                  {episodeList.map((episode) => (
+                    <EpisodeRow
+                      key={episode.number}
+                      showId={show.id}
+                      episodeNumber={episode.number}
+                      episodeTitle={episode.title}
+                      download={downloadsByEpisode.get(episode.number)}
+                      isReleasesOpen={openReleases === episode.number}
+                      isDownloading={isDownloading}
+                      onToggleReleases={handleToggleReleases}
+                      onDownload={downloadEpisode}
+                      onReleaseDownload={handleReleaseDownload}
+                    />
+                  ))}
                 </ul>
               ) : null}
             </div>

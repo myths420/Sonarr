@@ -1,6 +1,6 @@
 .year {
-  font-weight: normal;
   color: var(--disabledColor);
+  font-weight: normal;
 }
 
 .layout {
@@ -9,11 +9,11 @@
 }
 
 .poster {
+  flex: 0 0 auto;
   width: 180px;
   height: 252px;
-  flex: 0 0 auto;
-  object-fit: cover;
   border-radius: 4px;
+  object-fit: cover;
 }
 
 .info {
@@ -25,6 +25,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+
   margin-bottom: 10px;
 }
 
@@ -65,16 +66,17 @@
 }
 
 .episodeList {
-  max-height: 300px;
+  overflow-y: auto;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
+  max-height: 300px;
   list-style: none;
 }
 
 .episode {
   display: flex;
   gap: 10px;
+
   padding: 4px 0;
   border-bottom: 1px solid var(--borderColor);
 }
@@ -94,6 +96,7 @@
 .episodeActions {
   display: flex;
   gap: 6px;
+
   margin-top: 4px;
 }
 
@@ -110,16 +113,17 @@
   display: flex;
   align-items: center;
   gap: 8px;
+
   padding: 3px 0;
 }
 
 .releaseTitle {
   flex: 1 1 auto;
-  min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
 }
 
 .libraryLink {
@@ -137,12 +141,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
+
   margin-top: 3px;
 }
 
 .episodeProgressText {
   flex: 0 0 auto;
   color: var(--disabledColor);
-  font-size: 11px;
   white-space: nowrap;
+  font-size: 11px;
 }

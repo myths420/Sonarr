@@ -32,6 +32,12 @@ namespace NzbDrone.Core.AnimeSite
         // One tracker per process, regardless of DI lifetime.
         private static readonly ConcurrentDictionary<string, SiteDownload> _downloads = new();
 
+        // Cap concurrent Sites downloads so a range grab doesn't start 20
+        // streams at once. Env override: SITE_MAX_CONCURRENT_DOWNLOADS.
+        private static readonly SemaphoreSlim _downloadGate = new(
+            int.TryParse(Environment.GetEnvironmentVariable("SITE_MAX_CONCURRENT_DOWNLOADS"), out var m) && m > 0 ? m : 3,
+            int.TryParse(Environment.GetEnvironmentVariable("SITE_MAX_CONCURRENT_DOWNLOADS"), out var m2) && m2 > 0 ? m2 : 3);
+
         private readonly ISiteShowService _siteShowService;
         private readonly ISiteShowRepository _siteShowRepository;
         private readonly IRootFolderService _rootFolderService;
@@ -135,6 +141,17 @@ namespace NzbDrone.Core.AnimeSite
         {
             var partPath = download.OutputPath + ".part";
 
+            try
+            {
+                await _downloadGate.WaitAsync(token);
+            }
+            catch (OperationCanceledException)
+            {
+                download.Status = SiteDownloadStatus.Failed;
+                download.Message = "Cancelled.";
+                return;
+            }
+
             download.SpeedSampleTime = DateTime.UtcNow;
 
             try
@@ -216,6 +233,8 @@ namespace NzbDrone.Core.AnimeSite
             }
             finally
             {
+                _downloadGate.Release();
+
                 if (File.Exists(partPath))
                 {
                     File.Delete(partPath);

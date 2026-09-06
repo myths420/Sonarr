@@ -40,6 +40,12 @@ namespace NzbDrone.Core.AnimeSite
         // link-resolution settings. Returns an empty list if none resolve.
         List<ResolvedRelease> ResolveEpisodeReleases(int showId, int episodeNumber);
 
+        // Resolves releases for a synthetic Site/AniList-backed Series --
+        // maps (season, episode) back to the right catalogue row and its
+        // own episode number, then resolves. Used by the indexer's search
+        // path so it doesn't have to re-find the show by title.
+        List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber);
+
         // Adds this catalogue show to the Series tab. AniList-backed when a
         // match exists, otherwise built from the scraped episode list (see
         // AniListSeriesIds / SiteSeriesIds).
@@ -261,6 +267,80 @@ namespace NzbDrone.Core.AnimeSite
             return options == null
                 ? new List<AnimeSiteEpisodeEntry>()
                 : _catalogBrowser.BrowseEpisodes(options, show.Url, _logger);
+        }
+
+        public List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber)
+        {
+            if (series == null)
+            {
+                return new List<ResolvedRelease>();
+            }
+
+            // Every catalogue row for this show, across ALL configured
+            // sites -- the series may have been added from a site whose
+            // download host is dead while another site has a working one.
+            var rows = CatalogueRowsFor(series, seasonNumber);
+
+            // Prefer sites known to serve mediafire (resolvable, no captcha).
+            rows = rows
+                .OrderByDescending(r => (r.PosterUrl ?? string.Empty).Contains("animexin"))
+                .ThenBy(r => r.Id)
+                .ToList();
+
+            foreach (var row in rows)
+            {
+                var resolved = ResolveEpisodeReleases(row.Id, episodeNumber);
+                if (resolved.Count > 0)
+                {
+                    return resolved;
+                }
+            }
+
+            _logger.Debug("No site resolved a release for series '{0}' S{1}E{2} ({3} candidate rows)", series.Title, seasonNumber, episodeNumber, rows.Count);
+            return new List<ResolvedRelease>();
+        }
+
+        private List<SiteShow> CatalogueRowsFor(Series series, int seasonNumber)
+        {
+            var byId = new Dictionary<int, SiteShow>();
+
+            void Add(SiteShow s)
+            {
+                if (s != null)
+                {
+                    byId[s.Id] = s;
+                }
+            }
+
+            // Exact links: the originating site-show id, and any AniList id
+            // the series carries.
+            if (SiteSeriesIds.IsSiteId(series.TvdbId))
+            {
+                Add(_repository.Get(SiteSeriesIds.ToSiteShowId(series.TvdbId)));
+            }
+
+            foreach (var aniListId in series.AniListIds)
+            {
+                Add(_repository.FindByAniListId(aniListId));
+            }
+
+            // Same show on other sites: match by cleaned title, honouring
+            // the season (a folded season has "Season N" in its row title).
+            var baseClean = SeasonTitleParser.Parse(series.Title).BaseTitle.CleanSeriesTitle();
+            foreach (var indexer in _indexerFactory.All().Where(d => d.Implementation == "AnimeSiteIndexer"))
+            {
+                foreach (var s in _repository.FindBySourceList(indexer.Id))
+                {
+                    var parsed = SeasonTitleParser.Parse(s.Title);
+                    if (parsed.BaseTitle.CleanSeriesTitle() == baseClean &&
+                        (parsed.Season == seasonNumber || (seasonNumber <= 1 && !parsed.HasSeason)))
+                    {
+                        Add(s);
+                    }
+                }
+            }
+
+            return byId.Values.ToList();
         }
 
         public List<ResolvedRelease> ResolveEpisodeReleases(int showId, int episodeNumber)

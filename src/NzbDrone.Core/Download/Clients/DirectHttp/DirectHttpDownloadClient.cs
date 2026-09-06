@@ -28,7 +28,14 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
     {
         private static readonly ConcurrentDictionary<string, DirectDownloadState> _items = new();
         private static readonly object _persistLock = new();
+
+        // Caps how many RunDownloadAsync tasks stream at once ("Max
+        // Concurrent Downloads"). Static: one process, one pool.
+        private static readonly object _gateLock = new();
+
         private static bool _loaded;
+        private static SemaphoreSlim _downloadGate;
+        private static int _downloadGateMax;
 
         private readonly IHttpClient _httpClient;
         private readonly string _statePath;
@@ -78,13 +85,40 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
             _items[downloadId] = state;
             PersistState();
 
-            _ = Task.Run(() => RunDownloadAsync(state, sourceUrl, state.Cts.Token));
+            _ = Task.Run(() => RunDownloadAsync(state, sourceUrl, GetDownloadGate(), state.Cts.Token));
 
             return Task.FromResult(downloadId);
         }
 
-        private async Task RunDownloadAsync(DirectDownloadState state, string sourceUrl, CancellationToken token)
+        private SemaphoreSlim GetDownloadGate()
         {
+            var max = Settings.MaxConcurrentDownloads > 0 ? Settings.MaxConcurrentDownloads : 3;
+            lock (_gateLock)
+            {
+                if (_downloadGate == null || _downloadGateMax != max)
+                {
+                    _downloadGate = new SemaphoreSlim(max, max);
+                    _downloadGateMax = max;
+                }
+
+                return _downloadGate;
+            }
+        }
+
+        private async Task RunDownloadAsync(DirectDownloadState state, string sourceUrl, SemaphoreSlim gate, CancellationToken token)
+        {
+            try
+            {
+                await gate.WaitAsync(token);
+            }
+            catch (OperationCanceledException)
+            {
+                state.Status = DownloadItemStatus.Failed;
+                state.Message = "Cancelled.";
+                PersistState();
+                return;
+            }
+
             state.Status = DownloadItemStatus.Downloading;
             PersistState();
 
@@ -157,6 +191,8 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
             }
             finally
             {
+                gate.Release();
+
                 var partPath = state.FilePath + ".part";
                 if (_diskProvider.FileExists(partPath))
                 {

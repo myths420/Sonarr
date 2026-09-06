@@ -20,6 +20,12 @@ public class SiteShowResource : RestResource
     // Set by the controller when a matching library series exists.
     public int? SeriesId { get; set; }
     public string? SeriesTitleSlug { get; set; }
+
+    // Episode progress for the linked series (all seasons): how many the
+    // library has a file for, out of the total. Drives the "N/M" counter
+    // and the green/amber "in library" state on the catalogue card.
+    public int? SeriesEpisodeFileCount { get; set; }
+    public int? SeriesEpisodeCount { get; set; }
 }
 
 // Body for POST /siteshow/{id}/add. All optional; omitted fields use the

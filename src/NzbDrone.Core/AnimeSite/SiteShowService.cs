@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
@@ -80,6 +81,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly ISeriesService _seriesService;
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityProfileService _qualityProfileService;
+        private readonly IDiskProvider _diskProvider;
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
 
@@ -94,6 +96,7 @@ namespace NzbDrone.Core.AnimeSite
                                ISeriesService seriesService,
                                IRootFolderService rootFolderService,
                                IQualityProfileService qualityProfileService,
+                               IDiskProvider diskProvider,
                                IHttpClient httpClient,
                                Logger logger)
         {
@@ -108,6 +111,7 @@ namespace NzbDrone.Core.AnimeSite
             _seriesService = seriesService;
             _rootFolderService = rootFolderService;
             _qualityProfileService = qualityProfileService;
+            _diskProvider = diskProvider;
             _httpClient = httpClient;
             _logger = logger;
         }
@@ -327,7 +331,12 @@ namespace NzbDrone.Core.AnimeSite
                 ? AniListSeriesIds.FromAniListId(aniListId)
                 : SiteSeriesIds.FromSiteShowId(show.Id);
 
-            var existing = _seriesService.FindByTvdbId(syntheticId);
+            // Never add a second series for the same show. Check both
+            // synthetic id schemes (a show first added scrape-backed, then
+            // matched on AniList later, must resolve to the same series),
+            // the AniList id itself, and -- as a backstop against the
+            // add-from-folder screen -- an existing series folder.
+            var existing = FindExistingSeries(show, aniListId, syntheticId);
             if (existing != null)
             {
                 _logger.Info("Site show '{0}' is already in the library as series {1}", show.Title, existing.Id);
@@ -359,7 +368,66 @@ namespace NzbDrone.Core.AnimeSite
             var backing = aniListId > 0 ? $"anilist:{aniListId}" : $"site-scrape:{show.Id}";
             _logger.Info("Added site show '{0}' as series {1} ({2})", show.Title, added.Id, backing);
 
+            AdoptExistingFolderCasing(added);
+
             return added;
+        }
+
+        // If the show was downloaded before (files already on disk under a
+        // differently-cased folder), point the new series at that exact
+        // folder. Otherwise Sonarr -- case-sensitive on Linux even when the
+        // volume isn't -- treats the real folder as unmapped and the "add
+        // shows already downloaded" screen offers it again, ending up with
+        // two series over one folder.
+        private void AdoptExistingFolderCasing(Series series)
+        {
+            if (string.IsNullOrWhiteSpace(series.Path))
+            {
+                return;
+            }
+
+            var parent = System.IO.Path.GetDirectoryName(series.Path);
+            var name = System.IO.Path.GetFileName(series.Path);
+            if (string.IsNullOrEmpty(parent) || !_diskProvider.FolderExists(parent))
+            {
+                return;
+            }
+
+            var match = _diskProvider.GetDirectories(parent)
+                .FirstOrDefault(d => string.Equals(System.IO.Path.GetFileName(d), name, StringComparison.OrdinalIgnoreCase) &&
+                                     !string.Equals(System.IO.Path.GetFileName(d), name, StringComparison.Ordinal));
+
+            if (match == null)
+            {
+                return;
+            }
+
+            _logger.Info("Pointing series '{0}' at existing folder {1} (was {2})", series.Title, match, series.Path);
+            series.Path = match;
+            _seriesService.UpdateSeries(series);
+        }
+
+        private Series FindExistingSeries(SiteShow show, int aniListId, int syntheticId)
+        {
+            var all = _seriesService.GetAllSeries();
+
+            var byId = all.FirstOrDefault(s =>
+                s.TvdbId == syntheticId ||
+                s.TvdbId == SiteSeriesIds.FromSiteShowId(show.Id) ||
+                (aniListId > 0 && (s.TvdbId == AniListSeriesIds.FromAniListId(aniListId) || s.AniListIds.Contains(aniListId))));
+
+            if (byId != null)
+            {
+                return byId;
+            }
+
+            // Case-insensitive title match against an existing series folder
+            // name -- guards against a duplicate created via the "add shows
+            // already downloaded" screen when its folder casing differs.
+            var slug = Parser.Parser.CleanSeriesTitle(show.Title ?? string.Empty);
+            return string.IsNullOrEmpty(slug)
+                ? null
+                : all.FirstOrDefault(s => s.CleanTitle == slug);
         }
 
         private string ResolveRootFolder(string rootFolderPath)

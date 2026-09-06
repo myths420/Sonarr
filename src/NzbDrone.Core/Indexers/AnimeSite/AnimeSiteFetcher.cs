@@ -93,9 +93,14 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             var page = Direct(url, referer, fetch);
 
-            if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Auto && LooksBlocked(page.Html))
+            // Auto: fall back to the headless browser on any fetch that comes
+            // back as a Cloudflare challenge OR empty (a reset / silent block).
+            // This runs per fetch, so a sub-page or an off-site link a script
+            // pulls with host.get() gets the same treatment as the first page.
+            if (fetch.UsesHeadless && fetch.Mode == AnimeSiteBrowserMode.Auto &&
+                (LooksBlocked(page.Html) || string.IsNullOrWhiteSpace(page.Html)))
             {
-                _logger.Debug("AnimeSite: {0} looks Cloudflare-blocked, retrying via headless browser", url);
+                _logger.Debug("AnimeSite: direct fetch of {0} was blocked or empty, retrying via headless browser", url);
                 return Headless(url, fetch) ?? page;
             }
 

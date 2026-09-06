@@ -43,7 +43,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
 
             try
             {
-                var shows = _catalogBrowser.Browse(Settings, _logger);
+                var shows = _catalogBrowser.Browse(AnimeSiteCatalogueOptions.FromImportList(Settings), _logger);
 
                 var cleanup = string.IsNullOrWhiteSpace(Settings.TitleCleanupRegex)
                     ? null

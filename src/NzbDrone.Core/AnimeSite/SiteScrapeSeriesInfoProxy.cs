@@ -5,8 +5,9 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.Exceptions;
-using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.AnimeSite;
+using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Indexers.AnimeSite;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Tv;
 
@@ -29,17 +30,17 @@ namespace NzbDrone.Core.AnimeSite
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private readonly ISiteShowRepository _siteShowRepository;
-        private readonly IImportListFactory _importListFactory;
+        private readonly IIndexerFactory _indexerFactory;
         private readonly IAnimeSiteCatalogBrowser _catalogBrowser;
         private readonly Logger _logger;
 
         public SiteScrapeSeriesInfoProxy(ISiteShowRepository siteShowRepository,
-                                         IImportListFactory importListFactory,
+                                         IIndexerFactory indexerFactory,
                                          IAnimeSiteCatalogBrowser catalogBrowser,
                                          Logger logger)
         {
             _siteShowRepository = siteShowRepository;
-            _importListFactory = importListFactory;
+            _indexerFactory = indexerFactory;
             _catalogBrowser = catalogBrowser;
             _logger = logger;
         }
@@ -103,8 +104,12 @@ namespace NzbDrone.Core.AnimeSite
 
             try
             {
-                var settings = (AnimeSiteImportListSettings)_importListFactory.Get(show.SourceListId).Settings;
-                entries = _catalogBrowser.BrowseEpisodes(settings, show.Url, _logger);
+                var indexerSettings = _indexerFactory.All()
+                    .FirstOrDefault(d => d.Id == show.SourceListId && d.Implementation == "AnimeSiteIndexer")?.Settings as AnimeSiteSettings;
+
+                entries = indexerSettings == null
+                    ? new List<AnimeSiteEpisodeEntry>()
+                    : _catalogBrowser.BrowseEpisodes(AnimeSiteCatalogueOptions.FromIndexer(indexerSettings), show.Url, _logger);
             }
             catch (Exception ex)
             {

@@ -178,6 +178,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             LinkResolutionRules = "[{\"hostContains\":\"mediafire.com\",\"resolveSelector\":\"a#downloadButton[href], a.input.popsok[href]\"},{\"hostContains\":\"mirrored.to\",\"urlReplaceFrom\":\"dl=0\",\"urlReplaceTo\":\"dl=1\"}]";
             MultiLanguages = Array.Empty<int>();
             FailDownloads = Array.Empty<int>();
+            CatalogueScript = NzbDrone.Core.ImportLists.AnimeSite.AnimeSiteImportListSettings.DefaultScrapingScript;
+            CatalogueMaxPages = 3;
         }
 
         [FieldDefinition(0, Label = "Website URL", HelpText = "The site to search, e.g. https://animexin.dev or https://donghuaworld.com")]
@@ -212,6 +214,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         [FieldDefinition(10, Type = FieldType.Select, SelectOptions = typeof(FailDownloads), Label = "IndexerSettingsFailDownloads", HelpText = "IndexerSettingsFailDownloadsHelpText", Advanced = true)]
         public IEnumerable<int> FailDownloads { get; set; }
+
+        [FieldDefinition(11, Label = "Catalogue Script", Type = FieldType.Textbox, Advanced = true, HelpText = "JavaScript that lists this site's whole catalogue for the Sites section: define listShows(baseUrl, maxPages) returning JSON.stringify()'d [{title, url}, ...] and listEpisodes(showHtml, showUrl) returning [{number, title, url}, ...]. Same host.* helpers as Scraping Script. The default reads the site's Yoast sitemap. Adding a site here is all it takes for it to appear under Sites -- no separate import list needed.")]
+        public string CatalogueScript { get; set; }
+
+        [FieldDefinition(12, Label = "Catalogue Max Pages", Type = FieldType.Number, Advanced = true, HelpText = "How many listing pages listShows() is asked to walk each catalogue sync. The default sitemap script ignores this. Default: 3")]
+        public int CatalogueMaxPages { get; set; }
 
         // Parsed/derived helpers used by AnimeSiteIndexer when constructing
         // the parser -- kept here so the "how do I turn these text fields

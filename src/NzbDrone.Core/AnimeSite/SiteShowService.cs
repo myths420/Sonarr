@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
@@ -66,12 +65,11 @@ namespace NzbDrone.Core.AnimeSite
         }
     }
 
-    public class SiteShowService : ISiteShowService, IExecute<SiteShowSyncCommand>, IHandleAsync<ProviderDeletedEvent<IImportList>>
+    public class SiteShowService : ISiteShowService, IExecute<SiteShowSyncCommand>, IHandleAsync<ProviderDeletedEvent<IIndexer>>
     {
         private const int DefaultBackfillLimit = 25;
 
         private readonly ISiteShowRepository _repository;
-        private readonly IImportListFactory _importListFactory;
         private readonly IIndexerFactory _indexerFactory;
         private readonly IAnimeSiteCatalogBrowser _catalogBrowser;
         private readonly IAnimeSiteReleaseResolver _releaseResolver;
@@ -86,7 +84,6 @@ namespace NzbDrone.Core.AnimeSite
         private readonly Logger _logger;
 
         public SiteShowService(ISiteShowRepository repository,
-                               IImportListFactory importListFactory,
                                IIndexerFactory indexerFactory,
                                IAnimeSiteCatalogBrowser catalogBrowser,
                                IAnimeSiteReleaseResolver releaseResolver,
@@ -101,7 +98,6 @@ namespace NzbDrone.Core.AnimeSite
                                Logger logger)
         {
             _repository = repository;
-            _importListFactory = importListFactory;
             _indexerFactory = indexerFactory;
             _catalogBrowser = catalogBrowser;
             _releaseResolver = releaseResolver;
@@ -128,10 +124,14 @@ namespace NzbDrone.Core.AnimeSite
 
         public int SyncCatalogue(int sourceListId)
         {
-            var definition = _importListFactory.Get(sourceListId);
-            var settings = (AnimeSiteImportListSettings)definition.Settings;
+            var options = GetCatalogueOptions(sourceListId);
+            if (options == null)
+            {
+                _logger.Warn("No AnimeSite indexer {0} -- can't sync its Sites catalogue", sourceListId);
+                return 0;
+            }
 
-            var entries = _catalogBrowser.Browse(settings, _logger);
+            var entries = _catalogBrowser.Browse(options, _logger);
             var existing = _repository.FindBySourceList(sourceListId).ToDictionary(s => s.Slug, StringComparer.OrdinalIgnoreCase);
 
             var toAdd = new List<SiteShow>();
@@ -262,26 +262,25 @@ namespace NzbDrone.Core.AnimeSite
         public List<AnimeSiteEpisodeEntry> GetEpisodes(int showId)
         {
             var show = _repository.Get(showId);
-            var definition = _importListFactory.Get(show.SourceListId);
-            var settings = (AnimeSiteImportListSettings)definition.Settings;
+            var options = GetCatalogueOptions(show.SourceListId);
 
-            return _catalogBrowser.BrowseEpisodes(settings, show.Url, _logger);
+            return options == null
+                ? new List<AnimeSiteEpisodeEntry>()
+                : _catalogBrowser.BrowseEpisodes(options, show.Url, _logger);
         }
 
         public List<ResolvedRelease> ResolveEpisodeReleases(int showId, int episodeNumber)
         {
             var show = _repository.Get(showId);
-            var listDefinition = _importListFactory.Get(show.SourceListId);
-            var listSettings = (AnimeSiteImportListSettings)listDefinition.Settings;
 
-            var indexerSettings = FindMatchingIndexerSettings(listSettings.BaseUrl);
+            var indexerSettings = GetIndexerSettings(show.SourceListId);
             if (indexerSettings == null)
             {
-                _logger.Warn("No AnimeSite indexer configured for {0} -- add one with the same Website URL to enable downloads from the Sites catalogue.", listSettings.BaseUrl);
+                _logger.Warn("AnimeSite indexer {0} for this catalogue no longer exists -- can't resolve downloads.", show.SourceListId);
                 return new List<ResolvedRelease>();
             }
 
-            var episodes = _catalogBrowser.BrowseEpisodes(listSettings, show.Url, _logger);
+            var episodes = _catalogBrowser.BrowseEpisodes(AnimeSiteCatalogueOptions.FromIndexer(indexerSettings), show.Url, _logger);
             var episode = episodes.FirstOrDefault(e => e.Number == episodeNumber);
             if (episode == null)
             {
@@ -395,20 +394,22 @@ namespace NzbDrone.Core.AnimeSite
             return first.Id;
         }
 
-        // AnimeSiteIndexer and AnimeSiteImportList are two independent
-        // provider instances for "the same site" with nothing formally
-        // linking them -- BaseUrl is the only thing they're guaranteed to
-        // share, so it's what ties an Import List's catalogue back to the
-        // Indexer whose settings know how to turn an episode page into a
-        // real download link.
-        private AnimeSiteSettings FindMatchingIndexerSettings(string baseUrl)
+        // A "site" in the Sites section is exactly one AnimeSite indexer --
+        // SiteShow.SourceListId holds that indexer's id. Returns null if the
+        // indexer has since been deleted (its catalogue rows get cleaned up
+        // by the ProviderDeletedEvent handler below).
+        private AnimeSiteSettings GetIndexerSettings(int indexerId)
         {
-            var target = (baseUrl ?? string.Empty).TrimEnd('/');
+            var definition = _indexerFactory.All()
+                .FirstOrDefault(d => d.Id == indexerId && d.Implementation == "AnimeSiteIndexer");
 
-            return _indexerFactory.All()
-                .Where(d => d.Implementation == "AnimeSiteIndexer")
-                .Select(d => (AnimeSiteSettings)d.Settings)
-                .FirstOrDefault(s => string.Equals((s.BaseUrl ?? string.Empty).TrimEnd('/'), target, StringComparison.OrdinalIgnoreCase));
+            return definition?.Settings as AnimeSiteSettings;
+        }
+
+        private AnimeSiteCatalogueOptions GetCatalogueOptions(int indexerId)
+        {
+            var settings = GetIndexerSettings(indexerId);
+            return settings == null ? null : AnimeSiteCatalogueOptions.FromIndexer(settings);
         }
 
         public void Execute(SiteShowSyncCommand message)
@@ -421,10 +422,9 @@ namespace NzbDrone.Core.AnimeSite
             BackfillMetadata(message.SourceListId, manual ? 75 : DefaultBackfillLimit, manual);
         }
 
-        // Keeps SiteShows from piling up as orphans once their source
-        // import list is removed -- same cleanup ImportListItemService does
-        // for Sonarr's own list items.
-        public void HandleAsync(ProviderDeletedEvent<IImportList> message)
+        // Drop a site's whole catalogue when its AnimeSite indexer is
+        // deleted, so nothing lingers under Sites.
+        public void HandleAsync(ProviderDeletedEvent<IIndexer> message)
         {
             _repository.DeleteMany(_repository.FindBySourceList(message.ProviderId));
         }

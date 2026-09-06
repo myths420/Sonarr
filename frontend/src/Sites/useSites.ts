@@ -4,17 +4,17 @@ import Site from './Site';
 
 const DEFAULT_SITES: Site[] = [];
 
-// All configured import lists, filtered down to AnimeSite instances -- each
-// one is a "site" in the Sites catalogue nav. Reuses the existing
-// /importlist endpoint rather than adding a parallel one.
+// A "site" is exactly one AnimeSite indexer -- add one under
+// Settings > Indexers and it shows up here; delete it and it's gone.
+// Nothing is preconfigured.
 const useSites = () => {
   const result = useApiQuery<Site[]>({
-    path: '/importlist',
+    path: '/indexer',
   });
 
   const sites = useMemo(() => {
     return (result.data ?? DEFAULT_SITES).filter(
-      (list) => list.implementation === 'AnimeSiteImportList'
+      (indexer) => indexer.implementation === 'AnimeSiteIndexer'
     );
   }, [result.data]);
 

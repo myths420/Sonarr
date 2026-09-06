@@ -9,9 +9,9 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Download;
-using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.AnimeSite
@@ -41,7 +41,7 @@ namespace NzbDrone.Core.AnimeSite
 
         private readonly ISiteShowService _siteShowService;
         private readonly ISiteShowRepository _siteShowRepository;
-        private readonly IImportListFactory _importListFactory;
+        private readonly IRootFolderService _rootFolderService;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IHttpClient _httpClient;
         private readonly IDiskProvider _diskProvider;
@@ -49,7 +49,7 @@ namespace NzbDrone.Core.AnimeSite
 
         public SiteDownloadService(ISiteShowService siteShowService,
                                    ISiteShowRepository siteShowRepository,
-                                   IImportListFactory importListFactory,
+                                   IRootFolderService rootFolderService,
                                    IManageCommandQueue commandQueueManager,
                                    IHttpClient httpClient,
                                    IDiskProvider diskProvider,
@@ -57,7 +57,7 @@ namespace NzbDrone.Core.AnimeSite
         {
             _siteShowService = siteShowService;
             _siteShowRepository = siteShowRepository;
-            _importListFactory = importListFactory;
+            _rootFolderService = rootFolderService;
             _commandQueueManager = commandQueueManager;
             _httpClient = httpClient;
             _diskProvider = diskProvider;
@@ -77,10 +77,7 @@ namespace NzbDrone.Core.AnimeSite
             }
 
             var show = _siteShowRepository.Get(showId);
-            var listDefinition = _importListFactory.Get(show.SourceListId);
-            var destinationRoot = string.IsNullOrWhiteSpace(listDefinition.RootFolderPath)
-                ? Path.GetTempPath()
-                : listDefinition.RootFolderPath;
+            var destinationRoot = _rootFolderService.All().FirstOrDefault()?.Path ?? Path.GetTempPath();
 
             // Downloading anything from a show pulls it into the Series tab:
             // auto-create the (AniList-backed) series so the file lands in

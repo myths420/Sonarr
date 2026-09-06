@@ -36,14 +36,14 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
 
     public interface IAnimeSiteCatalogBrowser
     {
-        List<AnimeSiteCatalogEntry> Browse(AnimeSiteImportListSettings settings, Logger logger);
+        List<AnimeSiteCatalogEntry> Browse(AnimeSiteCatalogueOptions options, Logger logger);
 
         // Only supported when a Scraping Script is configured -- the show
         // detail view (Sites catalogue) is a script-only feature for now,
         // same as this class's non-script path never having grown episode
         // support. Returns an empty list (not an exception) if no script is
         // set, so callers can show "no episode data" rather than fail.
-        List<AnimeSiteEpisodeEntry> BrowseEpisodes(AnimeSiteImportListSettings settings, string showUrl, Logger logger);
+        List<AnimeSiteEpisodeEntry> BrowseEpisodes(AnimeSiteCatalogueOptions options, string showUrl, Logger logger);
     }
 
     // Extracted out of AnimeSiteImportList so the same "walk the site and
@@ -59,26 +59,26 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
             _httpClient = httpClient;
         }
 
-        public List<AnimeSiteCatalogEntry> Browse(AnimeSiteImportListSettings settings, Logger logger)
+        public List<AnimeSiteCatalogEntry> Browse(AnimeSiteCatalogueOptions options, Logger logger)
         {
-            return string.IsNullOrWhiteSpace(settings.ScrapingScript)
-                ? BrowseViaSelectors(settings, logger)
-                : BrowseViaScript(settings, logger);
+            return string.IsNullOrWhiteSpace(options.ScrapingScript)
+                ? BrowseViaSelectors(options, logger)
+                : BrowseViaScript(options, logger);
         }
 
         // Built-in path: walk BrowsePathPattern pages until MaxPages or the
         // first page that turns up no new links, pulling the show name from
         // each matched link's title attribute (falling back to its text).
-        private List<AnimeSiteCatalogEntry> BrowseViaSelectors(AnimeSiteImportListSettings settings, Logger logger)
+        private List<AnimeSiteCatalogEntry> BrowseViaSelectors(AnimeSiteCatalogueOptions options, Logger logger)
         {
-            var baseUrl = (settings.BaseUrl ?? string.Empty).TrimEnd('/');
-            var selector = settings.GetSeriesLinkSelector();
+            var baseUrl = (options.BaseUrl ?? string.Empty).TrimEnd('/');
+            var selector = options.GetSeriesLinkSelector();
             var seen = new HashSet<string>();
             var shows = new List<AnimeSiteCatalogEntry>();
 
-            for (var page = 1; page <= settings.MaxPages; page++)
+            for (var page = 1; page <= options.MaxPages; page++)
             {
-                var path = settings.BrowsePathPattern.Replace("{page}", page.ToString());
+                var path = options.BrowsePathPattern.Replace("{page}", page.ToString());
                 var url = path.StartsWith("http", StringComparison.OrdinalIgnoreCase)
                     ? path
                     : baseUrl + (path.StartsWith('/') ? path : "/" + path);
@@ -132,25 +132,25 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
         // Scripted path: mirrors AnimeSiteParser.ParseResponseViaScript --
         // one Jint engine, `host` bound, everything crossing the JS boundary
         // is a plain string, script returns JSON.stringify()'d results.
-        private List<AnimeSiteCatalogEntry> BrowseViaScript(AnimeSiteImportListSettings settings, Logger logger)
+        private List<AnimeSiteCatalogEntry> BrowseViaScript(AnimeSiteCatalogueOptions options, Logger logger)
         {
             var host = new AnimeSiteScriptHost(_httpClient, logger);
-            var baseUrl = (settings.BaseUrl ?? string.Empty).TrimEnd('/');
+            var baseUrl = (options.BaseUrl ?? string.Empty).TrimEnd('/');
 
-            var engine = new Engine(options => options.TimeoutInterval(TimeSpan.FromSeconds(60)));
+            var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromSeconds(60)));
             engine.SetValue("host", host);
-            engine.Execute(settings.ScrapingScript);
+            engine.Execute(options.ScrapingScript);
 
-            var json = engine.Invoke("listShows", baseUrl, settings.MaxPages).AsString();
+            var json = engine.Invoke("listShows", baseUrl, options.MaxPages).AsString();
             logger.Info("AnimeSite catalogue browser: listShows() returned {0} bytes of JSON for {1}", json?.Length ?? -1, baseUrl);
 
             return JsonSerializer.Deserialize<List<AnimeSiteCatalogEntry>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                    ?? new List<AnimeSiteCatalogEntry>();
         }
 
-        public List<AnimeSiteEpisodeEntry> BrowseEpisodes(AnimeSiteImportListSettings settings, string showUrl, Logger logger)
+        public List<AnimeSiteEpisodeEntry> BrowseEpisodes(AnimeSiteCatalogueOptions options, string showUrl, Logger logger)
         {
-            if (string.IsNullOrWhiteSpace(settings.ScrapingScript))
+            if (string.IsNullOrWhiteSpace(options.ScrapingScript))
             {
                 return new List<AnimeSiteEpisodeEntry>();
             }
@@ -161,9 +161,9 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
             {
                 var showHtml = host.Get(showUrl);
 
-                var engine = new Engine(options => options.TimeoutInterval(TimeSpan.FromSeconds(30)));
+                var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromSeconds(30)));
                 engine.SetValue("host", host);
-                engine.Execute(settings.ScrapingScript);
+                engine.Execute(options.ScrapingScript);
 
                 var json = engine.Invoke("listEpisodes", showHtml, showUrl).AsString();
 

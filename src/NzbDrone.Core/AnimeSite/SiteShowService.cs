@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
@@ -82,7 +81,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityProfileService _qualityProfileService;
         private readonly IDiskProvider _diskProvider;
-        private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteFetcher _fetcher;
         private readonly Logger _logger;
 
         public SiteShowService(ISiteShowRepository repository,
@@ -97,7 +96,7 @@ namespace NzbDrone.Core.AnimeSite
                                IRootFolderService rootFolderService,
                                IQualityProfileService qualityProfileService,
                                IDiskProvider diskProvider,
-                               IHttpClient httpClient,
+                               IAnimeSiteFetcher fetcher,
                                Logger logger)
         {
             _repository = repository;
@@ -112,7 +111,7 @@ namespace NzbDrone.Core.AnimeSite
             _rootFolderService = rootFolderService;
             _qualityProfileService = qualityProfileService;
             _diskProvider = diskProvider;
-            _httpClient = httpClient;
+            _fetcher = fetcher;
             _logger = logger;
         }
 
@@ -193,6 +192,8 @@ namespace NzbDrone.Core.AnimeSite
             var aniListHits = 0;
             var scrapeHits = 0;
 
+            var fetch = AnimeSiteFetchOptions.FromSettings(GetIndexerSettings(sourceListId) ?? new AnimeSiteSettings());
+
             foreach (var show in pending)
             {
                 show.LastSyncTime = DateTime.UtcNow;
@@ -204,7 +205,7 @@ namespace NzbDrone.Core.AnimeSite
                 }
                 else
                 {
-                    metadata = _scrapeMetadataProvider.ScrapeFromPage(show.Url);
+                    metadata = _scrapeMetadataProvider.ScrapeFromPage(show.Url, fetch);
                     if (metadata != null)
                     {
                         scrapeHits++;
@@ -295,7 +296,7 @@ namespace NzbDrone.Core.AnimeSite
             string episodeHtml;
             try
             {
-                episodeHtml = _httpClient.Get(AnimeSiteHttp.BuildRequest(episode.Url, show.Url)).Content;
+                episodeHtml = _fetcher.GetHtml(episode.Url, show.Url, AnimeSiteFetchOptions.FromSettings(indexerSettings));
             }
             catch (Exception ex)
             {

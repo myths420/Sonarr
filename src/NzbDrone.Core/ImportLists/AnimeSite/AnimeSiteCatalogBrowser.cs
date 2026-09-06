@@ -5,7 +5,6 @@ using AngleSharp;
 using AngleSharp.Dom;
 using Jint;
 using NLog;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers.AnimeSite;
 
 namespace NzbDrone.Core.ImportLists.AnimeSite
@@ -52,11 +51,11 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
     // feature) without duplicating the selector/script paths.
     public class AnimeSiteCatalogBrowser : IAnimeSiteCatalogBrowser
     {
-        private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteFetcher _fetcher;
 
-        public AnimeSiteCatalogBrowser(IHttpClient httpClient)
+        public AnimeSiteCatalogBrowser(IAnimeSiteFetcher fetcher)
         {
-            _httpClient = httpClient;
+            _fetcher = fetcher;
         }
 
         public List<AnimeSiteCatalogEntry> Browse(AnimeSiteCatalogueOptions options, Logger logger)
@@ -86,7 +85,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
                 string content;
                 try
                 {
-                    content = _httpClient.Get(AnimeSiteHttp.BuildRequest(url)).Content;
+                    content = _fetcher.GetHtml(url, null, options.Fetch);
                 }
                 catch (Exception ex)
                 {
@@ -134,7 +133,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
         // is a plain string, script returns JSON.stringify()'d results.
         private List<AnimeSiteCatalogEntry> BrowseViaScript(AnimeSiteCatalogueOptions options, Logger logger)
         {
-            var host = new AnimeSiteScriptHost(_httpClient, logger);
+            var host = new AnimeSiteScriptHost(_fetcher, options.Fetch, logger);
             var baseUrl = (options.BaseUrl ?? string.Empty).TrimEnd('/');
 
             var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromSeconds(60)));
@@ -155,7 +154,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
                 return new List<AnimeSiteEpisodeEntry>();
             }
 
-            var host = new AnimeSiteScriptHost(_httpClient, logger);
+            var host = new AnimeSiteScriptHost(_fetcher, options.Fetch, logger);
 
             try
             {

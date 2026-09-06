@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Dom;
 using NLog;
-using NzbDrone.Common.Http;
+using NzbDrone.Core.Indexers.AnimeSite;
 
 namespace NzbDrone.Core.AnimeSite
 {
@@ -16,21 +16,21 @@ namespace NzbDrone.Core.AnimeSite
     // main.py's extract_anime_metadata.
     public interface ISiteScrapeMetadataProvider
     {
-        ShowMetadata ScrapeFromPage(string showUrl);
+        ShowMetadata ScrapeFromPage(string showUrl, AnimeSiteFetchOptions fetch = null);
     }
 
     public class SiteScrapeMetadataProvider : ISiteScrapeMetadataProvider
     {
-        private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteFetcher _fetcher;
         private readonly Logger _logger;
 
-        public SiteScrapeMetadataProvider(IHttpClient httpClient, Logger logger)
+        public SiteScrapeMetadataProvider(IAnimeSiteFetcher fetcher, Logger logger)
         {
-            _httpClient = httpClient;
+            _fetcher = fetcher;
             _logger = logger;
         }
 
-        public ShowMetadata ScrapeFromPage(string showUrl)
+        public ShowMetadata ScrapeFromPage(string showUrl, AnimeSiteFetchOptions fetch = null)
         {
             if (string.IsNullOrWhiteSpace(showUrl))
             {
@@ -39,7 +39,7 @@ namespace NzbDrone.Core.AnimeSite
 
             try
             {
-                var html = _httpClient.Get(new HttpRequest(showUrl)).Content;
+                var html = _fetcher.GetHtml(showUrl, null, fetch ?? AnimeSiteFetchOptions.Direct);
                 var doc = ParseHtml(html);
 
                 var poster = FirstNonEmpty(

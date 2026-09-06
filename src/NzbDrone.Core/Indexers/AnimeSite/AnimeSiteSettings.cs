@@ -224,6 +224,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         [FieldDefinition(12, Label = "Catalogue Max Pages", Type = FieldType.Number, Advanced = true, HelpText = "How many listing pages listShows() is asked to walk each catalogue sync. The default sitemap script ignores this. Default: 3")]
         public int CatalogueMaxPages { get; set; }
 
+        [FieldDefinition(13, Label = "Headless Browser URL", Type = FieldType.Textbox, Advanced = true, HelpText = "A FlareSolverr endpoint (e.g. http://localhost:8191/v1). When set, page fetches for this site can go through a real headless browser so Cloudflare's \"Just a moment\" interstitial and other JS-gated pages can be read. Note: a Turnstile captcha (e.g. vikingfile's download gate) still can't be solved automatically. Leave empty to always fetch directly.")]
+        public string HeadlessBrowserUrl { get; set; }
+
+        [FieldDefinition(14, Label = "Headless Browser Mode", Type = FieldType.Select, SelectOptions = typeof(AnimeSiteBrowserMode), Advanced = true, HelpText = "Off: never use it. Auto: fetch directly, fall back to the headless browser only when a page comes back as a Cloudflare challenge (recommended). Always: route every fetch for this site through the headless browser (slower).")]
+        public int HeadlessBrowserMode { get; set; }
+
         // Parsed/derived helpers used by AnimeSiteIndexer when constructing
         // the parser -- kept here so the "how do I turn these text fields
         // into what the parser actually needs" logic lives next to the

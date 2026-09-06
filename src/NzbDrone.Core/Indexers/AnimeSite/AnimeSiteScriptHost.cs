@@ -4,7 +4,6 @@ using System.Text.Json;
 using AngleSharp;
 using AngleSharp.Dom;
 using NLog;
-using NzbDrone.Common.Http;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
@@ -23,21 +22,24 @@ namespace NzbDrone.Core.Indexers.AnimeSite
     // host.select()/host.selectOne()'s return value.
     public class AnimeSiteScriptHost
     {
-        private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteFetcher _fetcher;
+        private readonly AnimeSiteFetchOptions _fetch;
         private readonly Logger _logger;
 
-        public AnimeSiteScriptHost(IHttpClient httpClient, Logger logger)
+        public AnimeSiteScriptHost(IAnimeSiteFetcher fetcher, AnimeSiteFetchOptions fetch, Logger logger)
         {
-            _httpClient = httpClient;
+            _fetcher = fetcher;
+            _fetch = fetch ?? AnimeSiteFetchOptions.Direct;
             _logger = logger;
         }
 
         // host.get(url) -> raw HTML string of that page (or "" on failure).
+        // Routes through the site's headless-browser option when configured.
         public string Get(string url)
         {
             try
             {
-                return _httpClient.Get(AnimeSiteHttp.BuildRequest(url)).Content;
+                return _fetcher.GetHtml(url, null, _fetch) ?? "";
             }
             catch (Exception ex)
             {

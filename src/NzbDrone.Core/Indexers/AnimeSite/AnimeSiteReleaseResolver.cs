@@ -6,7 +6,6 @@ using AngleSharp;
 using AngleSharp.Dom;
 using Jint;
 using NLog;
-using NzbDrone.Common.Http;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
@@ -30,6 +29,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         public string DownloadLinkSelector { get; set; }
         public List<LinkResolutionRule> ResolutionRules { get; set; }
         public string ScrapingScript { get; set; }
+        public AnimeSiteFetchOptions Fetch { get; set; } = AnimeSiteFetchOptions.Direct;
 
         public static AnimeSiteReleaseOptions FromSettings(AnimeSiteSettings settings)
         {
@@ -38,7 +38,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 DirectDownloadHosts = settings.GetDirectDownloadHostsArray(),
                 DownloadLinkSelector = settings.GetDownloadLinkSelector(),
                 ResolutionRules = settings.GetLinkResolutionRules(),
-                ScrapingScript = settings.ScrapingScript
+                ScrapingScript = settings.ScrapingScript,
+                Fetch = AnimeSiteFetchOptions.FromSettings(settings)
             };
         }
     }
@@ -56,11 +57,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
     // against and so can never go through AnimeSiteIndexer at all.
     public class AnimeSiteReleaseResolver : IAnimeSiteReleaseResolver
     {
-        private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteFetcher _fetcher;
 
-        public AnimeSiteReleaseResolver(IHttpClient httpClient)
+        public AnimeSiteReleaseResolver(IAnimeSiteFetcher fetcher)
         {
-            _httpClient = httpClient;
+            _fetcher = fetcher;
         }
 
         public List<ResolvedRelease> GetReleases(AnimeSiteReleaseOptions options, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
@@ -78,7 +79,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         private List<ResolvedRelease> GetReleasesViaScript(AnimeSiteReleaseOptions options, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
         {
             var releases = new List<ResolvedRelease>();
-            var host = new AnimeSiteScriptHost(_httpClient, logger);
+            var host = new AnimeSiteScriptHost(_fetcher, options.Fetch, logger);
 
             try
             {
@@ -137,7 +138,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 }
 
                 var host = directDlHosts.First(h => href.Contains(h));
-                var resolvedUrl = ApplyResolutionRules(href, options.ResolutionRules ?? new List<LinkResolutionRule>(), logger);
+                var resolvedUrl = ApplyResolutionRules(href, options.ResolutionRules ?? new List<LinkResolutionRule>(), options.Fetch, logger);
 
                 releases.Add(new ResolvedRelease
                 {
@@ -149,7 +150,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return releases;
         }
 
-        private string ApplyResolutionRules(string url, List<LinkResolutionRule> resolutionRules, Logger logger)
+        private string ApplyResolutionRules(string url, List<LinkResolutionRule> resolutionRules, AnimeSiteFetchOptions fetch, Logger logger)
         {
             const int maxHops = 5;
             for (var hop = 0; hop < maxHops; hop++)
@@ -162,7 +163,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
                 if (!string.IsNullOrEmpty(rule.ResolveSelector))
                 {
-                    var resolved = ResolveViaSelector(url, rule.ResolveSelector, logger);
+                    var resolved = ResolveViaSelector(url, rule.ResolveSelector, fetch, logger);
                     if (string.IsNullOrEmpty(resolved) || resolved == url)
                     {
                         break;
@@ -189,12 +190,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return url;
         }
 
-        private string ResolveViaSelector(string landingUrl, string selector, Logger logger)
+        private string ResolveViaSelector(string landingUrl, string selector, AnimeSiteFetchOptions fetch, Logger logger)
         {
             try
             {
-                var response = _httpClient.Get(new HttpRequest(landingUrl));
-                var doc = ParseHtml(response.Content);
+                var content = _fetcher.GetHtml(landingUrl, null, fetch);
+                var doc = ParseHtml(content);
                 var element = doc.QuerySelector(selector);
                 var href = element?.GetAttribute("href");
                 return !string.IsNullOrEmpty(href) && href.StartsWith("http") ? href : null;

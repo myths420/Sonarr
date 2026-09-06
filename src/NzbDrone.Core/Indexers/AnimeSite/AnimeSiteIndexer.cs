@@ -29,6 +29,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         // but worth knowing if this is ever repurposed for something that
         // fires many searches in parallel.
         private readonly IAnimeSiteReleaseResolver _releaseResolver;
+        private readonly IAnimeSiteFetcher _fetcher;
 
         private int _currentAbsoluteEpisodeNumber;
         private string _currentSeriesTitle;
@@ -39,10 +40,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                                  IParsingService parsingService,
                                  Logger logger,
                                  ILocalizationService localizationService,
-                                 IAnimeSiteReleaseResolver releaseResolver)
+                                 IAnimeSiteReleaseResolver releaseResolver,
+                                 IAnimeSiteFetcher fetcher)
             : base(httpClient, indexerStatusService, configService, parsingService, logger, localizationService)
         {
             _releaseResolver = releaseResolver;
+            _fetcher = fetcher;
         }
 
         public override string Name => "Anime Site";
@@ -80,7 +83,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             // saved instance -- GetEpisodeUrlRegex() still has an internal
             // fallback to the default pattern as a last-resort safety net.
             return new AnimeSiteParser(
-                _httpClient,
+                _fetcher,
+                AnimeSiteFetchOptions.FromSettings(Settings),
                 _logger,
                 _releaseResolver,
                 _currentAbsoluteEpisodeNumber,

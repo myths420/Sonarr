@@ -15,6 +15,7 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
         public string SeriesLinkSelector { get; set; }
         public string TitleCleanupRegex { get; set; }
         public string ScrapingScript { get; set; }
+        public AnimeSiteFetchOptions Fetch { get; set; } = AnimeSiteFetchOptions.Direct;
 
         public string GetSeriesLinkSelector()
         {
@@ -29,7 +30,8 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
                 MaxPages = settings.CatalogueMaxPages > 0 ? settings.CatalogueMaxPages : 3,
                 ScrapingScript = string.IsNullOrWhiteSpace(settings.CatalogueScript)
                     ? AnimeSiteImportListSettings.DefaultScrapingScript
-                    : settings.CatalogueScript
+                    : settings.CatalogueScript,
+                Fetch = AnimeSiteFetchOptions.FromSettings(settings)
             };
         }
 

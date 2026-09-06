@@ -5,7 +5,6 @@ using AngleSharp;
 using AngleSharp.Dom;
 using Jint;
 using NLog;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
@@ -28,7 +27,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
     // to search for.
     public class AnimeSiteParser : IParseIndexerResponse
     {
-        private readonly IHttpClient _httpClient;
+        private readonly IAnimeSiteFetcher _fetcher;
+        private readonly AnimeSiteFetchOptions _fetch;
         private readonly Logger _logger;
         private readonly IAnimeSiteReleaseResolver _releaseResolver;
         private readonly Regex _episodeUrlRegex;
@@ -37,9 +37,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         private readonly AnimeSiteReleaseOptions _releaseOptions;
         private readonly string _scrapingScript;
 
-        public AnimeSiteParser(IHttpClient httpClient, Logger logger, IAnimeSiteReleaseResolver releaseResolver, int absoluteEpisodeNumber, string seriesTitle, Regex episodeUrlRegex, string[] directDlHosts, string seriesLinkSelector, string episodeLinkSelector, string downloadLinkSelector, List<LinkResolutionRule> resolutionRules, string scrapingScript)
+        public AnimeSiteParser(IAnimeSiteFetcher fetcher, AnimeSiteFetchOptions fetch, Logger logger, IAnimeSiteReleaseResolver releaseResolver, int absoluteEpisodeNumber, string seriesTitle, Regex episodeUrlRegex, string[] directDlHosts, string seriesLinkSelector, string episodeLinkSelector, string downloadLinkSelector, List<LinkResolutionRule> resolutionRules, string scrapingScript)
         {
-            _httpClient = httpClient;
+            _fetcher = fetcher;
+            _fetch = fetch ?? AnimeSiteFetchOptions.Direct;
             _logger = logger;
             _releaseResolver = releaseResolver;
             AbsoluteEpisodeNumber = absoluteEpisodeNumber;
@@ -52,7 +53,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 DirectDownloadHosts = directDlHosts,
                 DownloadLinkSelector = downloadLinkSelector,
                 ResolutionRules = resolutionRules ?? new List<LinkResolutionRule>(),
-                ScrapingScript = scrapingScript
+                ScrapingScript = scrapingScript,
+                Fetch = fetch ?? AnimeSiteFetchOptions.Direct
             };
             _scrapingScript = scrapingScript;
         }
@@ -90,7 +92,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                     return releases;
                 }
 
-                var episodeHtml = _httpClient.Get(new HttpRequest(episodeLink)).Content;
+                var episodeHtml = _fetcher.GetHtml(episodeLink, animeLink, _fetch);
                 releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeLink, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeLink));
             }
             catch (Exception ex)
@@ -114,7 +116,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         private IList<ReleaseInfo> ParseResponseViaScript(IndexerResponse indexerResponse)
         {
             var releases = new List<ReleaseInfo>();
-            var host = new AnimeSiteScriptHost(_httpClient, _logger);
+            var host = new AnimeSiteScriptHost(_fetcher, _fetch, _logger);
 
             try
             {
@@ -211,8 +213,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         // AnimeSiteSettings.EpisodeLinkSelector.
         private string FindEpisodeLink(string animeLink, int absoluteEpisodeNumber)
         {
-            var response = _httpClient.Get(new HttpRequest(animeLink));
-            var doc = ParseHtml(response.Content);
+            var doc = ParseHtml(_fetcher.GetHtml(animeLink, null, _fetch));
 
             foreach (var a in doc.QuerySelectorAll(_episodeLinkSelector))
             {

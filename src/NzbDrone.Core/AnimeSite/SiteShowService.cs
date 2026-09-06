@@ -7,6 +7,7 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource.AniList;
@@ -583,6 +584,7 @@ namespace NzbDrone.Core.AnimeSite
             var added = 0;
             var skipped = 0;
             var failed = 0;
+            var seriesIds = new HashSet<int>();
 
             for (var i = 0; i < shows.Count; i++)
             {
@@ -591,10 +593,13 @@ namespace NzbDrone.Core.AnimeSite
 
                 try
                 {
-                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, message.SearchForMissingEpisodes);
+                    // Search is kicked off once per series below so shows
+                    // already in the library still get a grab.
+                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, false);
                     if (series != null)
                     {
                         added++;
+                        seriesIds.Add(series.Id);
                     }
                 }
                 catch (SiteSeriesAddException ex)
@@ -610,6 +615,15 @@ namespace NzbDrone.Core.AnimeSite
             }
 
             _logger.Info("Add All for indexer {0}: {1} added, {2} skipped (no metadata / already present), {3} failed", message.SourceListId, added, skipped, failed);
+
+            if (message.SearchForMissingEpisodes && seriesIds.Count > 0)
+            {
+                _logger.Info("Download All: queuing episode search for {0} series", seriesIds.Count);
+                foreach (var seriesId in seriesIds)
+                {
+                    _commandQueueManager.Push(new SeriesSearchCommand(seriesId));
+                }
+            }
         }
 
         // Drop a site's catalogue rows when its indexer is deleted.

@@ -99,7 +99,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             try
             {
-                var engine = new Engine(options => options.TimeoutInterval(TimeSpan.FromSeconds(30)));
+                // Generous: findSeriesUrl/findEpisodeUrl walk season pages
+                // and getReleases follows landing-page hops, each of which
+                // can be a slow headless-browser fetch.
+                var engine = new Engine(options => options.TimeoutInterval(TimeSpan.FromMinutes(5)));
                 engine.SetValue("host", host);
                 engine.Execute(_scrapingScript);
 

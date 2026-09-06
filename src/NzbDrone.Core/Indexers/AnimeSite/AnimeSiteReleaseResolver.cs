@@ -72,8 +72,9 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             try
             {
-                // Long timeout: a script may follow landing-page hops.
-                var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromSeconds(120)));
+                // Long timeout: getReleases() may follow several landing-page
+                // hops, and each one can be a slow headless-browser fetch.
+                var engine = new Engine(o => o.TimeoutInterval(TimeSpan.FromMinutes(5)));
                 engine.SetValue("host", host);
                 engine.Execute(options.ScrapingScript);
 

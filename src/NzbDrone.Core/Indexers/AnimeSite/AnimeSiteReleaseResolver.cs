@@ -74,6 +74,23 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        // The "Select Video Server" <option>s: a base64 iframe blob + a
+        // human label like "Hardsub English Dailymotion".
+        private static readonly Regex ServerOption = new Regex(
+            @"<option[^>]*\svalue=""([A-Za-z0-9+/=]{16,})""[^>]*>([^<]+)</option>",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex IframeSrc = new Regex(
+            @"src=""([^""]+)""", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex EnglishLabel = new Regex(
+            @"\b(english|eng[\s-]?sub|all[\s-]?sub|multi[\s-]?sub|multiple[\s-]?sub)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex IndonesianLabel = new Regex(
+            @"\b(indonesian?|indo[\s-]?sub|sub[\s-]?indo)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         public List<ResolvedRelease> GetReleases(AnimeSiteReleaseOptions options, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
         {
             var releases = !string.IsNullOrWhiteSpace(options.ScrapingScript)
@@ -83,20 +100,31 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             var kept = releases
                 .Where(r => string.IsNullOrEmpty(r.Url) ||
                             !SkipHosts.Any(h => r.Url.Contains(h, StringComparison.OrdinalIgnoreCase)))
+                .Where(r => !IsForeignLanguage(r.Title))
                 .ToList();
 
             if (kept.Count != releases.Count)
             {
-                logger.Debug("Dropped {0} TeraBox link(s) for {1} episode {2}", releases.Count - kept.Count, seriesTitle, episodeNumber);
+                logger.Debug("Filtered {0} of {1} release(s) for {2} episode {3} (skip-host or non-English sub)", releases.Count - kept.Count, releases.Count, seriesTitle, episodeNumber);
             }
 
-            // The episode's real video is a Dailymotion embed, and on an
-            // "-english-sub" page it is the English hardsub -- the right
-            // language, reliably up, no login. Prefer it; Mediafire (which
-            // may be a different sub language) stays as the fallback.
+            // The episode's real video is a Dailymotion embed. These sites
+            // list one per sub language ("Hardsub English Dailymotion" vs
+            // "Hardsub Indonesia Dailymotion"); pick the English one and
+            // prefer it -- the right language, reliably up, no login.
             kept.InsertRange(0, DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
 
             return kept;
+        }
+
+        // A release the scraper labelled with a non-English sub language
+        // (e.g. "... - 1080p - Indonesian - [mediafire.com]"). This fork is
+        // English-only, so those are dropped outright.
+        private static bool IsForeignLanguage(string title)
+        {
+            return !string.IsNullOrEmpty(title)
+                && IndonesianLabel.IsMatch(title)
+                && !EnglishLabel.IsMatch(title);
         }
 
         private static IEnumerable<ResolvedRelease> DailymotionReleases(AnimeSiteFetchOptions fetch, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
@@ -106,20 +134,76 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 yield break;
             }
 
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var baseUrl = fetch.PageResolverUrl.TrimEnd('/');
+            var byId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var sawLabelledServers = false;
 
-            foreach (Match m in DailymotionId.Matches(episodeHtml))
+            // Labelled server <option>s first (base64 iframe blobs).
+            foreach (Match opt in ServerOption.Matches(episodeHtml))
             {
-                var id = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
-                if (string.IsNullOrEmpty(id) || !seen.Add(id))
+                string decoded;
+                try
+                {
+                    decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(opt.Groups[1].Value));
+                }
+                catch (FormatException)
                 {
                     continue;
                 }
 
-                logger.Debug("Dailymotion embed {0} found for {1} episode {2}", id, seriesTitle, episodeNumber);
+                var src = IframeSrc.Match(decoded);
+                if (!src.Success)
+                {
+                    continue;
+                }
 
-                var url = $"{baseUrl}/dailymotion/fetch?v={Uri.EscapeDataString(id)}";
+                sawLabelledServers = true;
+
+                var dm = DailymotionId.Match(src.Groups[1].Value);
+                if (!dm.Success)
+                {
+                    continue;
+                }
+
+                var id = dm.Groups[1].Success ? dm.Groups[1].Value : dm.Groups[2].Value;
+                var label = opt.Groups[2].Value.Trim();
+                var isIndo = IndonesianLabel.IsMatch(label);
+                var isEng = EnglishLabel.IsMatch(label);
+
+                // 3 = clearly English, 2 = "all sub" style, drop pure Indonesian.
+                var score = isEng && !isIndo ? 3 : isEng ? 2 : isIndo ? -1 : 1;
+                if (score < 0)
+                {
+                    continue;
+                }
+
+                if (!byId.TryGetValue(id, out var existing) || score > existing)
+                {
+                    byId[id] = score;
+                }
+            }
+
+            // Fall back to any bare (already-decoded) Dailymotion embed on
+            // the page -- but only when there were no labelled servers at
+            // all. If there were and none was English, the bare embed is
+            // just the (wrong-language) default player; don't grab it.
+            if (byId.Count == 0 && !sawLabelledServers)
+            {
+                foreach (Match m in DailymotionId.Matches(episodeHtml))
+                {
+                    var id = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+                    if (!string.IsNullOrEmpty(id))
+                    {
+                        byId.TryAdd(id, 0);
+                    }
+                }
+            }
+
+            foreach (var kv in byId.OrderByDescending(k => k.Value))
+            {
+                logger.Debug("Dailymotion embed {0} (score {1}) for {2} episode {3}", kv.Key, kv.Value, seriesTitle, episodeNumber);
+
+                var url = $"{baseUrl}/dailymotion/fetch?v={Uri.EscapeDataString(kv.Key)}";
                 if (!string.IsNullOrEmpty(episodeUrl))
                 {
                     url += $"&referer={Uri.EscapeDataString(episodeUrl)}";

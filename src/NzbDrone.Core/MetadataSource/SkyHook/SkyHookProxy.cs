@@ -60,11 +60,36 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                     ? existing.AniListIds.ToList()
                     : new List<int> { AniListSeriesIds.ToAniListId(tvdbSeriesId) };
 
-                var tuple = ids.Count > 1
-                    ? _aniListSeriesInfoProxy.GetSeriesInfo(ids)
-                    : _aniListSeriesInfoProxy.GetSeriesInfo(ids[0]);
+                Tuple<Series, List<Episode>> tuple;
+                var aniListUnreachable = false;
+                try
+                {
+                    tuple = ids.Count > 1
+                        ? _aniListSeriesInfoProxy.GetSeriesInfo(ids)
+                        : _aniListSeriesInfoProxy.GetSeriesInfo(ids[0]);
+                }
+                catch (Exception ex) when (ex is not SeriesNotFoundException && existing != null)
+                {
+                    // AniList is unreachable and there's no cached copy. Keep
+                    // the series alive from its existing record + the site's
+                    // scraped episode list rather than letting the Refresh
+                    // fail and strip episodes/files.
+                    _logger.Warn(ex, "AniList lookup failed for {0} with no cache; keeping series from catalogue scrape", tvdbSeriesId);
+                    tuple = new Tuple<Series, List<Episode>>(existing, new List<Episode>());
+                    aniListUnreachable = true;
+                }
 
                 EnsureSitePoster(tuple.Item1, ids[0]);
+                MergeScrapedEpisodes(ids, tuple.Item2, aniListUnreachable);
+
+                if (tuple.Item2.Count == 0 && existing != null)
+                {
+                    // Neither AniList nor the site gave us anything. Abort the
+                    // Refresh so Sonarr keeps the series' current episodes and
+                    // files instead of stripping them to an empty list.
+                    throw new SkyHookException("AniList and the catalogue scrape both returned no episodes for '{0}'; keeping existing data", existing.Title);
+                }
+
                 return tuple;
             }
 
@@ -123,6 +148,45 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             catch (Exception ex)
             {
                 _logger.Debug(ex, "Couldn't add a site poster fallback for AniList {0}", aniListId);
+            }
+        }
+
+        // AniList episode counts lag airing donghua by weeks, and the API is
+        // often down entirely. Top the episode list up with the catalogue
+        // show's scraped episodes so files for later episodes have a slot to
+        // import into. Only adds; never removes an AniList episode.
+        private void MergeScrapedEpisodes(IReadOnlyList<int> aniListIds, List<Episode> episodes, bool allowScrape)
+        {
+            try
+            {
+                var scraped = _siteScrapeSeriesInfoProxy.ScrapedEpisodesForAniList(aniListIds, allowScrape);
+                if (scraped.Count == 0)
+                {
+                    return;
+                }
+
+                var have = new HashSet<(int Season, int Episode)>(episodes.Select(e => (e.SeasonNumber, e.EpisodeNumber)));
+                var added = 0;
+                foreach (var episode in scraped)
+                {
+                    if (have.Add((episode.SeasonNumber, episode.EpisodeNumber)))
+                    {
+                        episodes.Add(episode);
+                        added++;
+                    }
+                }
+
+                if (added > 0)
+                {
+                    episodes.Sort((a, b) => a.SeasonNumber != b.SeasonNumber
+                        ? a.SeasonNumber.CompareTo(b.SeasonNumber)
+                        : a.EpisodeNumber.CompareTo(b.EpisodeNumber));
+                    _logger.Debug("Added {0} scraped episode(s) to AniList series {1}", added, aniListIds.FirstOrDefault());
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Couldn't merge scraped episodes for AniList {0}", aniListIds?.FirstOrDefault());
             }
         }
 

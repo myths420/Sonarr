@@ -25,6 +25,15 @@ namespace NzbDrone.Core.AnimeSite
         // this AniList id, or null if there's no site poster to serve.
         // Used as a fallback when AniList has no cover image.
         string LocalPosterUrl(int aniListId);
+
+        // Episode list for the catalogue show(s) behind these AniList id(s) --
+        // one season per id, earliest first. Empty when none are in the
+        // catalogue. Used to keep an AniList-backed series' episode list whole
+        // while the AniList API is down, or when it lags the site.
+        // allowScrape=false (the common Refresh path) synthesises episodes from
+        // the persisted catalogue count with no network call; allowScrape=true
+        // (AniList unreachable) does a live episode-list scrape.
+        List<Episode> ScrapedEpisodesForAniList(IReadOnlyList<int> aniListIds, bool allowScrape);
     }
 
     public class SiteScrapeSeriesInfoProxy : ISiteScrapeSeriesInfoProxy
@@ -118,7 +127,49 @@ namespace NzbDrone.Core.AnimeSite
             return series;
         }
 
-        private List<Episode> MapEpisodes(SiteShow show)
+        public List<Episode> ScrapedEpisodesForAniList(IReadOnlyList<int> aniListIds, bool allowScrape)
+        {
+            var episodes = new List<Episode>();
+            if (aniListIds == null)
+            {
+                return episodes;
+            }
+
+            for (var i = 0; i < aniListIds.Count; i++)
+            {
+                var show = _siteShowRepository.FindByAniListId(aniListIds[i]);
+                if (show == null)
+                {
+                    continue;
+                }
+
+                episodes.AddRange(allowScrape
+                    ? MapEpisodes(show, i + 1)
+                    : SynthesiseEpisodes(show.Episodes, i + 1));
+            }
+
+            return episodes;
+        }
+
+        private static List<Episode> SynthesiseEpisodes(int count, int seasonNumber)
+        {
+            var episodes = new List<Episode>();
+            for (var n = 1; n <= count; n++)
+            {
+                episodes.Add(new Episode
+                {
+                    SeasonNumber = seasonNumber,
+                    EpisodeNumber = n,
+                    AbsoluteEpisodeNumber = n,
+                    Title = $"Episode {n}",
+                    Monitored = true
+                });
+            }
+
+            return episodes;
+        }
+
+        private List<Episode> MapEpisodes(SiteShow show, int seasonNumber = 1)
         {
             List<AnimeSiteEpisodeEntry> entries;
 
@@ -148,7 +199,7 @@ namespace NzbDrone.Core.AnimeSite
 
                     return new Episode
                     {
-                        SeasonNumber = 1,
+                        SeasonNumber = seasonNumber,
                         EpisodeNumber = e.Number,
                         AbsoluteEpisodeNumber = e.Number,
                         Title = string.IsNullOrWhiteSpace(e.Title) ? $"Episode {e.Number}" : e.Title,

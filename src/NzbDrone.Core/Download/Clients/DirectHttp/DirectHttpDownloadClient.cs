@@ -310,16 +310,21 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
 
                 foreach (var item in snapshot)
                 {
-                    var status = item.Status;
+                    var onDisk = _diskProvider.FileExists(item.FilePath) && new FileInfo(item.FilePath).Length > 0;
 
-                    // On reload, an unfinished download becomes Completed if
-                    // its file is fully on disk, else Failed.
-                    if (status is DownloadItemStatus.Downloading or DownloadItemStatus.Queued)
+                    // A download interrupted by a restart: keep it only if
+                    // the file is fully on disk (so import can still pick it
+                    // up). Otherwise drop it -- re-adding it as Failed makes
+                    // Sonarr blocklist + re-grab the whole queue on every
+                    // restart. It just gets picked up by the next search.
+                    if (item.Status is DownloadItemStatus.Downloading or DownloadItemStatus.Queued && !onDisk)
                     {
-                        status = _diskProvider.FileExists(item.FilePath) && new FileInfo(item.FilePath).Length > 0
-                            ? DownloadItemStatus.Completed
-                            : DownloadItemStatus.Failed;
+                        continue;
                     }
+
+                    var status = item.Status is DownloadItemStatus.Downloading or DownloadItemStatus.Queued
+                        ? DownloadItemStatus.Completed
+                        : item.Status;
 
                     _items[item.DownloadId] = new DirectDownloadState
                     {
@@ -329,9 +334,7 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                         FilePath = item.FilePath,
                         TotalSize = item.TotalSize,
                         Status = status,
-                        Message = status == DownloadItemStatus.Failed && item.Status != DownloadItemStatus.Failed
-                            ? "Interrupted by a restart."
-                            : item.Message,
+                        Message = item.Message,
                     };
                 }
             }

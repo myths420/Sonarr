@@ -156,12 +156,18 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
                     foreach (var r in resolved.Where(r => !string.IsNullOrEmpty(r.Url) && seen.Add(r.Url)))
                     {
+                        // Always a clean, parseable SxxExx title -- the
+                        // scraper's own titles ("... - Episode 1 - 720p -
+                        // [mirrored.to]") don't parse, so the download
+                        // never imports and gets re-grabbed forever.
+                        var quality = QualityTag(r.Title);
+                        var title = $"{series.Title} - S{seasonNumber:00}E{episodeNumber:00}"
+                            + (quality != null ? $" [{quality}]" : string.Empty);
+
                         releases.Add(new ReleaseInfo
                         {
                             Guid = r.Url,
-                            Title = !string.IsNullOrEmpty(r.Title)
-                                ? r.Title
-                                : $"{series.Title} - S{seasonNumber:00}E{episodeNumber:00}",
+                            Title = title,
                             DownloadUrl = r.Url,
                             InfoUrl = r.Url,
                             Size = 0,
@@ -179,6 +185,36 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
 
             return releases;
+        }
+
+        private static string QualityTag(string scraperTitle)
+        {
+            if (string.IsNullOrEmpty(scraperTitle))
+            {
+                return null;
+            }
+
+            if (scraperTitle.Contains("2160") || scraperTitle.Contains("4K", StringComparison.OrdinalIgnoreCase))
+            {
+                return "2160p";
+            }
+
+            if (scraperTitle.Contains("1080"))
+            {
+                return "1080p";
+            }
+
+            if (scraperTitle.Contains("720"))
+            {
+                return "720p";
+            }
+
+            if (scraperTitle.Contains("480"))
+            {
+                return "480p";
+            }
+
+            return null;
         }
     }
 }

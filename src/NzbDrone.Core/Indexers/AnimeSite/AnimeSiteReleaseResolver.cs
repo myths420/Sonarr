@@ -56,14 +56,18 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             _fetcher = fetcher;
         }
 
-        // TeraBox only hands the real file to its desktop app -- a browser
-        // download just deep-links into that app. Nothing to resolve, so
-        // these links are dropped and a Mediafire / Mirror / Dailymotion
-        // alternative is used instead.
+        // Hosts that are never worth handing to the downloader:
+        //  - TeraBox: real file only downloads through its desktop app
+        //  - mirrored.to: a timed multi-host redirect page; the hosts it
+        //    points to are ~all dead, and the copies that do work are raw
+        //    rips with no English subs.
+        // Dropping these leaves Mediafire (the site's own subbed encode)
+        // and the Dailymotion embed, which is what actually works.
         private static readonly string[] SkipHosts =
         {
             "terabox", "1024tera", "teraboxapp", "teraboxlink", "terasharelink",
-            "4funbox", "mirrobox", "nephobox", "momerybox", "freeterabox"
+            "4funbox", "mirrobox", "nephobox", "momerybox", "freeterabox",
+            "mirrored.to", "mirrorace.com", "mir.cr"
         };
 
         private static readonly Regex DailymotionId = new Regex(
@@ -86,11 +90,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 logger.Debug("Dropped {0} TeraBox link(s) for {1} episode {2}", releases.Count - kept.Count, seriesTitle, episodeNumber);
             }
 
-            // The episode's real video is a Dailymotion embed on every one
-            // of these sites. Offer it as a fallback -- after the direct
-            // file hosts (a plain .mp4 download beats a headless capture +
-            // remux) but ahead of nothing when every mirror is dead.
-            kept.AddRange(DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
+            // The episode's real video is a Dailymotion embed, and on an
+            // "-english-sub" page it is the English hardsub -- the right
+            // language, reliably up, no login. Prefer it; Mediafire (which
+            // may be a different sub language) stays as the fallback.
+            kept.InsertRange(0, DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
 
             return kept;
         }

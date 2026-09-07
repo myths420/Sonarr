@@ -137,8 +137,10 @@ public class SiteShowController : Controller
         }
     }
 
-    // Locally-cached poster, served from disk.
+    // Locally-cached poster, served from disk. HEAD is allowed too --
+    // Sonarr's MediaCoverService probes with HEAD before downloading.
     [HttpGet("{id:int}/poster")]
+    [HttpHead("{id:int}/poster")]
     public IActionResult GetSiteShowPoster(int id)
     {
         var show = _siteShowService.Get(id);

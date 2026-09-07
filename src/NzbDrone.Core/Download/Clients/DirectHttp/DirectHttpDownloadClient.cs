@@ -69,26 +69,48 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
 
         public override Task<string> Download(RemoteEpisode remoteEpisode, IIndexer indexer)
         {
-            var sourceUrl = remoteEpisode.Release.DownloadUrl;
-            var downloadId = Guid.NewGuid().ToString();
-            var title = remoteEpisode.Release.Title;
-            var (downloadFolder, filePath) = BuildOutputPaths(title);
-
-            var state = new DirectDownloadState
+            try
             {
-                DownloadId = downloadId,
-                Title = title,
-                DownloadFolder = downloadFolder,
-                FilePath = filePath,
-                Status = DownloadItemStatus.Queued,
-                Cts = new CancellationTokenSource(),
-            };
-            _items[downloadId] = state;
-            PersistState();
+                var sourceUrl = remoteEpisode.Release.DownloadUrl;
+                if (string.IsNullOrWhiteSpace(sourceUrl))
+                {
+                    throw new DownloadClientException("Release has no download URL.");
+                }
 
-            _ = Task.Run(() => RunDownloadAsync(state, sourceUrl, GetDownloadGate(), state.Cts.Token));
+                if (string.IsNullOrWhiteSpace(Settings.DestinationDirectory))
+                {
+                    throw new DownloadClientException("Direct HTTP has no Destination Directory configured.");
+                }
 
-            return Task.FromResult(downloadId);
+                var downloadId = Guid.NewGuid().ToString();
+                var title = remoteEpisode.Release.Title;
+                var (downloadFolder, filePath) = BuildOutputPaths(title);
+
+                var state = new DirectDownloadState
+                {
+                    DownloadId = downloadId,
+                    Title = title,
+                    DownloadFolder = downloadFolder,
+                    FilePath = filePath,
+                    Status = DownloadItemStatus.Queued,
+                    Cts = new CancellationTokenSource(),
+                };
+                _items[downloadId] = state;
+                PersistState();
+
+                _ = Task.Run(() => RunDownloadAsync(state, sourceUrl, GetDownloadGate(), state.Cts.Token));
+
+                return Task.FromResult(downloadId);
+            }
+            catch (DownloadClientException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Direct HTTP couldn't queue '{0}'", remoteEpisode.Release.Title);
+                throw new DownloadClientException("Direct HTTP couldn't queue the download: " + ex.Message, ex);
+            }
         }
 
         private SemaphoreSlim GetDownloadGate()

@@ -108,11 +108,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 logger.Debug("Filtered {0} of {1} release(s) for {2} episode {3} (skip-host or non-English sub)", releases.Count - kept.Count, releases.Count, seriesTitle, episodeNumber);
             }
 
-            // The episode's real video is a Dailymotion embed. These sites
-            // list one per sub language ("Hardsub English Dailymotion" vs
-            // "Hardsub Indonesia Dailymotion"); pick the English one and
-            // prefer it -- the right language, reliably up, no login.
-            kept.InsertRange(0, DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
+            // Direct file hosts (Mediafire etc.) first -- a plain .mp4 grab
+            // beats a headless capture + remux. The Dailymotion English
+            // embed is appended as the fallback for when every direct link
+            // is dead; the Sites downloader walks the list top to bottom.
+            kept.AddRange(DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
 
             return kept;
         }

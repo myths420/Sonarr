@@ -160,6 +160,7 @@ interface EpisodeRowProps {
   showId: number;
   episodeNumber: number;
   episodeTitle: string;
+  hasFile?: boolean;
   download?: SiteDownload;
   isReleasesOpen: boolean;
   isDownloading: boolean;
@@ -172,6 +173,7 @@ function EpisodeRow({
   showId,
   episodeNumber,
   episodeTitle,
+  hasFile,
   download,
   isReleasesOpen,
   isDownloading,
@@ -191,19 +193,26 @@ function EpisodeRow({
     <li className={styles.episode}>
       <span className={styles.episodeNumber}>{episodeNumber}</span>
       <div className={styles.episodeMain}>
-        <span>{episodeTitle}</span>
+        <span>
+          {episodeTitle}
+          {hasFile ? (
+            <Label className={styles.episodeHasFile} kind={kinds.SUCCESS}>
+              {translate('Downloaded')}
+            </Label>
+          ) : null}
+        </span>
 
         <div className={styles.episodeActions}>
           <Button size={sizes.SMALL} onPress={handleToggle}>
             {translate('Search')}
           </Button>
           <Button
-            kind={kinds.PRIMARY}
+            kind={hasFile ? kinds.DEFAULT : kinds.PRIMARY}
             size={sizes.SMALL}
             isDisabled={isDownloading}
             onPress={handleDownload}
           >
-            {translate('Download')}
+            {hasFile ? translate('Redownload') : translate('Download')}
           </Button>
         </div>
 
@@ -424,6 +433,7 @@ function SiteShowDetailModal({
                       showId={show.id}
                       episodeNumber={episode.number}
                       episodeTitle={episode.title}
+                      hasFile={episode.hasFile}
                       download={downloadsByEpisode.get(episode.number)}
                       isReleasesOpen={openReleases === episode.number}
                       isDownloading={isDownloading}

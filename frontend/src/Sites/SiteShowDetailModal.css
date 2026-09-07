@@ -93,6 +93,10 @@
   min-width: 0;
 }
 
+.episodeHasFile {
+  margin-left: 8px;
+}
+
 .episodeActions {
   display: flex;
   gap: 6px;

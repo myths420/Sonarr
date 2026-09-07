@@ -16,18 +16,21 @@ public class SiteShowController : Controller
     private readonly ISiteShowPosterService _posterService;
     private readonly ISeriesService _seriesService;
     private readonly ISeriesStatisticsService _seriesStatisticsService;
+    private readonly IEpisodeService _episodeService;
 
     public SiteShowController(ISiteShowService siteShowService,
                              ISiteDownloadService siteDownloadService,
                              ISiteShowPosterService posterService,
                              ISeriesService seriesService,
-                             ISeriesStatisticsService seriesStatisticsService)
+                             ISeriesStatisticsService seriesStatisticsService,
+                             IEpisodeService episodeService)
     {
         _siteShowService = siteShowService;
         _siteDownloadService = siteDownloadService;
         _posterService = posterService;
         _seriesService = seriesService;
         _seriesStatisticsService = seriesStatisticsService;
+        _episodeService = episodeService;
     }
 
     [HttpGet]
@@ -159,7 +162,34 @@ public class SiteShowController : Controller
     [Produces("application/json")]
     public List<SiteShowEpisodeResource> GetSiteShowEpisodes(int id)
     {
-        return _siteShowService.GetEpisodes(id).ToResource();
+        var resources = _siteShowService.GetEpisodes(id).ToResource();
+
+        var show = _siteShowService.Get(id);
+        if (show == null)
+        {
+            return resources;
+        }
+
+        // Reuse the series-linking logic, then flag episodes whose file is
+        // already on disk in the linked series.
+        var linked = show.ToResource()!;
+        LinkLibrarySeries(new List<SiteShowResource> { linked });
+
+        if (linked.SeriesId is int seriesId)
+        {
+            var season = SeasonTitleParser.Parse(show.Title).Season;
+            var onDisk = _episodeService.GetEpisodeBySeries(seriesId)
+                .Where(e => e.SeasonNumber == season && e.HasFile)
+                .Select(e => e.EpisodeNumber)
+                .ToHashSet();
+
+            foreach (var resource in resources)
+            {
+                resource.HasFile = onDisk.Contains(resource.Number);
+            }
+        }
+
+        return resources;
     }
 
     [HttpGet("{id:int}/episodes/{number:int}/releases")]

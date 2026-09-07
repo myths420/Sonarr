@@ -7,6 +7,10 @@ public class SiteShowEpisodeResource
     public int Number { get; set; }
     public string? Title { get; set; }
     public string? Url { get; set; }
+
+    // True when the linked library series already has a file for this
+    // episode (set by the controller, not the scraper).
+    public bool HasFile { get; set; }
 }
 
 public static class SiteShowEpisodeResourceMapper

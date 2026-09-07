@@ -1815,6 +1815,7 @@
   "ReleaseTitle": "Release Title",
   "ReleaseType": "Release Type",
   "ReleaseTypes": "Release Types",
+  "Redownload": "Redownload",
   "Reload": "Reload",
   "RemotePath": "Remote Path",
   "RemotePathMappingBadDockerPathHealthCheckMessage": "You are using docker; download client {downloadClientName} places downloads in {path} but this is not a valid {osName} path. Review your remote path mappings and download client settings.",

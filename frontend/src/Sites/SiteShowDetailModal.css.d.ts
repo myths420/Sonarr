@@ -5,6 +5,7 @@ interface CssExports {
   'downloadPanel': string;
   'episode': string;
   'episodeActions': string;
+  'episodeHasFile': string;
   'episodeList': string;
   'episodeMain': string;
   'episodeNumber': string;

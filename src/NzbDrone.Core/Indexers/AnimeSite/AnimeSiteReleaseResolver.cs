@@ -55,7 +55,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             _fetcher = fetcher;
         }
 
-        private static readonly string[] TeraboxHosts =
+        // TeraBox only hands the real file to its desktop app -- a browser
+        // download just deep-links into that app. Nothing to resolve, so
+        // these links are dropped and a Mediafire / Mirror alternative is
+        // used instead.
+        private static readonly string[] SkipHosts =
         {
             "terabox", "1024tera", "teraboxapp", "teraboxlink", "terasharelink",
             "4funbox", "mirrobox", "nephobox", "momerybox", "freeterabox"
@@ -67,40 +71,17 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 ? GetReleasesViaScript(options, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger)
                 : GetReleasesViaSelectors(options, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger);
 
-            ResolveTeraboxLinks(releases, options.Fetch, logger);
-            return releases;
-        }
+            var kept = releases
+                .Where(r => string.IsNullOrEmpty(r.Url) ||
+                            !SkipHosts.Any(h => r.Url.Contains(h, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
 
-        // TeraBox links are share pages, not direct files -- hand each one
-        // to the page-resolver's click-and-capture flow to turn it into a
-        // real download URL. Left untouched (and likely to fail at download
-        // time) when no page-resolver is configured.
-        private void ResolveTeraboxLinks(List<ResolvedRelease> releases, AnimeSiteFetchOptions fetch, Logger logger)
-        {
-            if (fetch == null || !fetch.UsesResolver)
+            if (kept.Count != releases.Count)
             {
-                return;
+                logger.Debug("Dropped {0} TeraBox link(s) for {1} episode {2}", releases.Count - kept.Count, seriesTitle, episodeNumber);
             }
 
-            foreach (var release in releases)
-            {
-                if (string.IsNullOrEmpty(release.Url) ||
-                    !TeraboxHosts.Any(h => release.Url.Contains(h, StringComparison.OrdinalIgnoreCase)))
-                {
-                    continue;
-                }
-
-                var resolved = _fetcher.ResolveTerabox(release.Url, fetch);
-                if (!string.IsNullOrEmpty(resolved?.Link))
-                {
-                    logger.Debug("TeraBox link resolved to a direct URL for {0}", release.Title);
-                    release.Url = resolved.Link;
-                }
-                else
-                {
-                    logger.Warn("TeraBox link could not be resolved for {0}: {1}", release.Title, resolved?.Error);
-                }
-            }
+            return kept;
         }
 
         // getReleases(episodeHtml, episodeUrl, seriesTitle, episodeNumber,

@@ -87,9 +87,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
 
             // The episode's real video is a Dailymotion embed on every one
-            // of these sites. With a page-resolver configured, offer it as
-            // the top pick (1080p, no dead mirrors, no login).
-            kept.InsertRange(0, DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
+            // of these sites. Offer it as a fallback -- after the direct
+            // file hosts (a plain .mp4 download beats a headless capture +
+            // remux) but ahead of nothing when every mirror is dead.
+            kept.AddRange(DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
 
             return kept;
         }

@@ -78,9 +78,15 @@ namespace NzbDrone.Core.AnimeSite
         public SiteDownload StartDownload(int showId, int episodeNumber, string releaseUrl = null, bool skipIfPresent = false)
         {
             var releases = _siteShowService.ResolveEpisodeReleases(showId, episodeNumber);
-            var release = string.IsNullOrWhiteSpace(releaseUrl)
-                ? releases.FirstOrDefault()
-                : releases.FirstOrDefault(r => string.Equals(r.Url, releaseUrl, StringComparison.OrdinalIgnoreCase)) ?? releases.FirstOrDefault();
+
+            // A specific release was asked for -> just that one. Otherwise
+            // the whole ordered list, tried top to bottom until one works
+            // (direct file hosts first, Dailymotion last).
+            var candidates = string.IsNullOrWhiteSpace(releaseUrl)
+                ? releases.Where(r => !string.IsNullOrWhiteSpace(r.Url)).ToList()
+                : releases.Where(r => string.Equals(r.Url, releaseUrl, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            var release = candidates.FirstOrDefault();
             if (release == null)
             {
                 _logger.Warn("No downloadable release resolved for show {0} episode {1}", showId, episodeNumber);
@@ -136,7 +142,7 @@ namespace NzbDrone.Core.AnimeSite
 
             _downloads[download.DownloadId] = download;
 
-            _ = Task.Run(() => RunDownloadAsync(download, release.Url, download.Cts.Token));
+            _ = Task.Run(() => RunDownloadAsync(download, candidates, download.Cts.Token));
 
             return download;
         }
@@ -157,9 +163,11 @@ namespace NzbDrone.Core.AnimeSite
             return true;
         }
 
-        // Streamed download with live byte progress. Writes to a .part file
-        // until complete and rejects a text/html response (a landing page).
-        private async Task RunDownloadAsync(SiteDownload download, string sourceUrl, CancellationToken token)
+        // Tries each candidate release in order until one downloads
+        // cleanly. A text/html response (landing page) or any error moves
+        // on to the next -- so a dead Mediafire mirror falls through to the
+        // Dailymotion stream.
+        private async Task RunDownloadAsync(SiteDownload download, List<ResolvedRelease> candidates, CancellationToken token)
         {
             var partPath = download.OutputPath + ".part";
 
@@ -180,65 +188,51 @@ namespace NzbDrone.Core.AnimeSite
             {
                 _diskProvider.EnsureFolder(Path.GetDirectoryName(download.OutputPath));
 
-                // Size up front via HEAD so the progress bar has a total
-                // (GetAsync only returns once the body has fully streamed).
-                try
+                string lastError = null;
+                for (var i = 0; i < candidates.Count; i++)
                 {
-                    var headResponse = await _httpClient.HeadAsync(new HttpRequest(sourceUrl) { AllowAutoRedirect = true }, token);
-                    if (headResponse.Headers.ContentLength is { } length && length > 0)
+                    token.ThrowIfCancellationRequested();
+                    var candidate = candidates[i];
+                    download.Title = candidate.Title;
+
+                    try
                     {
-                        download.TotalSize = length;
+                        await DownloadCandidateAsync(download, candidate.Url, partPath, token);
+
+                        download.BytesDownloaded = download.TotalSize = _diskProvider.GetFileSize(download.OutputPath);
+                        download.BytesPerSecond = 0;
+                        download.Status = SiteDownloadStatus.Completed;
+                        _logger.Info("[{0}] Site download completed -> {1}", download.Title, download.OutputPath);
+
+                        if (download.SeriesId.HasValue)
+                        {
+                            _commandQueueManager.Push(new RescanSeriesCommand(download.SeriesId.Value));
+                        }
+
+                        return;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex.Message;
+                        download.BytesDownloaded = 0;
+                        download.TotalSize = 0;
+                        var tail = i < candidates.Count - 1 ? " -- trying the next source" : string.Empty;
+                        _logger.Warn("[{0}] source {1}/{2} failed: {3}{4}", download.Title, i + 1, candidates.Count, ex.Message, tail);
+
+                        if (File.Exists(partPath))
+                        {
+                            File.Delete(partPath);
+                        }
                     }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Debug(ex, "HEAD request for size failed for {0}", download.Title);
-                }
 
-                await using (var fileStream = new FileStream(partPath, FileMode.Create, FileAccess.ReadWrite))
-                await using (var countingStream = new ProgressStream(fileStream, written => UpdateProgress(download, written)))
-                {
-                    var request = new HttpRequest(sourceUrl)
-                    {
-                        AllowAutoRedirect = true,
-                        ResponseStream = countingStream,
-                        RequestTimeout = TimeSpan.FromMinutes(30)
-                    };
-
-                    var response = await _httpClient.GetAsync(request, token);
-
-                    if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))
-                    {
-                        var host = new Uri(sourceUrl).Host.ToLowerInvariant();
-                        var isCaptchaHost = host.Contains("vikingfile") || host.Contains("vik1ngfile");
-
-                        throw new HttpException(request, response, isCaptchaHost
-                            ? $"{host} serves the file behind a captcha. Open the link in a browser, download the file, and drop it in the series folder; a rescan will import it."
-                            : "The download link returned a web page, not a file. The release likely needs a Link Resolution Rule this indexer doesn't have.");
-                    }
-
-                    if (download.TotalSize == 0)
-                    {
-                        download.TotalSize = response.Headers.ContentLength ?? download.BytesDownloaded;
-                    }
-                }
-
-                if (File.Exists(download.OutputPath))
-                {
-                    File.Delete(download.OutputPath);
-                }
-
-                File.Move(partPath, download.OutputPath);
-
-                download.BytesDownloaded = download.TotalSize = _diskProvider.GetFileSize(download.OutputPath);
                 download.BytesPerSecond = 0;
-                download.Status = SiteDownloadStatus.Completed;
-                _logger.Info("[{0}] Site download completed -> {1}", download.Title, download.OutputPath);
-
-                if (download.SeriesId.HasValue)
-                {
-                    _commandQueueManager.Push(new RescanSeriesCommand(download.SeriesId.Value));
-                }
+                download.Status = SiteDownloadStatus.Failed;
+                download.Message = lastError ?? "No source produced a downloadable file.";
             }
             catch (OperationCanceledException)
             {
@@ -262,6 +256,65 @@ namespace NzbDrone.Core.AnimeSite
                     File.Delete(partPath);
                 }
             }
+        }
+
+        // Streams one source URL to the .part file and moves it into place.
+        // Throws if the response is a web page (landing page) rather than a
+        // file, so RunDownloadAsync can move to the next candidate.
+        private async Task DownloadCandidateAsync(SiteDownload download, string sourceUrl, string partPath, CancellationToken token)
+        {
+            download.SpeedSampleTime = DateTime.UtcNow;
+            download.TotalSize = 0;
+
+            // Size up front via HEAD so the progress bar has a total
+            // (GetAsync only returns once the body has fully streamed).
+            try
+            {
+                var headResponse = await _httpClient.HeadAsync(new HttpRequest(sourceUrl) { AllowAutoRedirect = true }, token);
+                if (headResponse.Headers.ContentLength is { } length && length > 0)
+                {
+                    download.TotalSize = length;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Debug(ex, "HEAD request for size failed for {0}", download.Title);
+            }
+
+            await using (var fileStream = new FileStream(partPath, FileMode.Create, FileAccess.ReadWrite))
+            await using (var countingStream = new ProgressStream(fileStream, written => UpdateProgress(download, written)))
+            {
+                var request = new HttpRequest(sourceUrl)
+                {
+                    AllowAutoRedirect = true,
+                    ResponseStream = countingStream,
+                    RequestTimeout = TimeSpan.FromMinutes(60)
+                };
+
+                var response = await _httpClient.GetAsync(request, token);
+
+                if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))
+                {
+                    throw new HttpException(request, response, "source returned a web page, not a file");
+                }
+
+                if (download.TotalSize == 0)
+                {
+                    download.TotalSize = response.Headers.ContentLength ?? download.BytesDownloaded;
+                }
+            }
+
+            if (new FileInfo(partPath).Length == 0)
+            {
+                throw new InvalidOperationException("source returned an empty file");
+            }
+
+            if (File.Exists(download.OutputPath))
+            {
+                File.Delete(download.OutputPath);
+            }
+
+            File.Move(partPath, download.OutputPath);
         }
 
         // True when the episode already has a file and the site release

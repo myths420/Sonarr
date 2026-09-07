@@ -13,6 +13,7 @@ using NzbDrone.Core.Indexers.AnimeSite;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
@@ -50,6 +51,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IEpisodeService _episodeService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly IBuildFileNames _fileNameBuilder;
         private readonly IHttpClient _httpClient;
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
@@ -60,6 +62,7 @@ namespace NzbDrone.Core.AnimeSite
                                    IManageCommandQueue commandQueueManager,
                                    IEpisodeService episodeService,
                                    IMediaFileService mediaFileService,
+                                   IBuildFileNames fileNameBuilder,
                                    IHttpClient httpClient,
                                    IDiskProvider diskProvider,
                                    Logger logger)
@@ -68,6 +71,7 @@ namespace NzbDrone.Core.AnimeSite
             _siteShowRepository = siteShowRepository;
             _rootFolderService = rootFolderService;
             _commandQueueManager = commandQueueManager;
+            _fileNameBuilder = fileNameBuilder;
             _episodeService = episodeService;
             _mediaFileService = mediaFileService;
             _httpClient = httpClient;
@@ -114,11 +118,23 @@ namespace NzbDrone.Core.AnimeSite
             if (series != null && !string.IsNullOrWhiteSpace(series.Path))
             {
                 // A "<Show> Season 2" catalogue row is folded into the base
-                // series as Season 2 -- name the file for that season so the
-                // rescan drops it in the right season folder.
+                // series as Season 2 -- put the file in that season's
+                // folder so the rescan imports it in place rather than
+                // leaving it loose in the series root.
                 var season = SeasonTitleParser.Parse(show.Title).Season;
                 var fileName = FileNameSafe($"{series.Title} - S{season:00}E{episodeNumber:00} - Episode {episodeNumber}") + ".mp4";
-                outputPath = Path.Combine(series.Path, fileName);
+
+                var folder = series.Path;
+                if (series.SeasonFolder)
+                {
+                    var seasonFolder = _fileNameBuilder.GetSeasonFolder(series, season);
+                    if (!string.IsNullOrWhiteSpace(seasonFolder))
+                    {
+                        folder = Path.Combine(series.Path, seasonFolder);
+                    }
+                }
+
+                outputPath = Path.Combine(folder, fileName);
             }
             else
             {

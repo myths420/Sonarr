@@ -23,6 +23,7 @@ const http = require('http');
 // bot check fingerprints. Drop-in for playwright's chromium.
 const { chromium } = require('patchright');
 const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER, CAPTCHA_ENDPOINT } = require('./captcha');
+const { dailymotionFetch } = require('./dailymotion');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const NAV_TIMEOUT = parseInt(process.env.NAV_TIMEOUT_MS || '45000', 10);
@@ -218,6 +219,12 @@ const server = http.createServer((req, res) => {
       captchaEndpoint: captchaEnabled() ? CAPTCHA_ENDPOINT : undefined,
     }));
   }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && req.url.startsWith('/dailymotion/fetch')) {
+    const q = new URL(req.url, 'http://x').searchParams;
+    return dailymotionFetch(req, res, q);
+  }
+
   if (req.method !== 'POST' || req.url !== '/resolve') {
     res.writeHead(404);
     return res.end('not found');

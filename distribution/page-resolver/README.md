@@ -58,6 +58,20 @@ environment:
 when a solver is active. Without a key, a Turnstile page fails fast with
 `502 {"error":"Cloudflare Turnstile is gating this link ..."}`.
 
+## Dailymotion
+
+`GET /dailymotion/fetch?v=<id>[&referer=<page>][&max=1080]` -> streams
+`video/mp4`.
+
+The Chinese-anime sites embed the real episode video from Dailymotion.
+This drives the embed in the headless browser, grabs the HLS master,
+picks the highest variant (<= `max`, default 1080), and `ffmpeg`-remuxes
+it to a single MP4 piped straight to the caller. Sonarr's AnimeSite
+release resolver adds this automatically as the top pick for any episode
+page with a Dailymotion embed, whenever a Page Resolver URL is set.
+
+Needs `ffmpeg` (bundled in the image).
+
 ## Wire it into Sonarr
 
 Set **Settings → Indexers → (your AnimeSite indexer) → Page Resolver URL**

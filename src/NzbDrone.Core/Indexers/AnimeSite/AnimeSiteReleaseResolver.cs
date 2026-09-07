@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Dom;
 using Jint;
@@ -57,13 +58,17 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         // TeraBox only hands the real file to its desktop app -- a browser
         // download just deep-links into that app. Nothing to resolve, so
-        // these links are dropped and a Mediafire / Mirror alternative is
-        // used instead.
+        // these links are dropped and a Mediafire / Mirror / Dailymotion
+        // alternative is used instead.
         private static readonly string[] SkipHosts =
         {
             "terabox", "1024tera", "teraboxapp", "teraboxlink", "terasharelink",
             "4funbox", "mirrobox", "nephobox", "momerybox", "freeterabox"
         };
+
+        private static readonly Regex DailymotionId = new Regex(
+            @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public List<ResolvedRelease> GetReleases(AnimeSiteReleaseOptions options, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
         {
@@ -81,7 +86,46 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 logger.Debug("Dropped {0} TeraBox link(s) for {1} episode {2}", releases.Count - kept.Count, seriesTitle, episodeNumber);
             }
 
+            // The episode's real video is a Dailymotion embed on every one
+            // of these sites. With a page-resolver configured, offer it as
+            // the top pick (1080p, no dead mirrors, no login).
+            kept.InsertRange(0, DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
+
             return kept;
+        }
+
+        private static IEnumerable<ResolvedRelease> DailymotionReleases(AnimeSiteFetchOptions fetch, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
+        {
+            if (fetch == null || !fetch.UsesResolver || string.IsNullOrEmpty(episodeHtml))
+            {
+                yield break;
+            }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var baseUrl = fetch.PageResolverUrl.TrimEnd('/');
+
+            foreach (Match m in DailymotionId.Matches(episodeHtml))
+            {
+                var id = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+                if (string.IsNullOrEmpty(id) || !seen.Add(id))
+                {
+                    continue;
+                }
+
+                logger.Debug("Dailymotion embed {0} found for {1} episode {2}", id, seriesTitle, episodeNumber);
+
+                var url = $"{baseUrl}/dailymotion/fetch?v={Uri.EscapeDataString(id)}";
+                if (!string.IsNullOrEmpty(episodeUrl))
+                {
+                    url += $"&referer={Uri.EscapeDataString(episodeUrl)}";
+                }
+
+                yield return new ResolvedRelease
+                {
+                    Title = $"{seriesTitle} - Episode {episodeNumber:000} [Dailymotion]",
+                    Url = url
+                };
+            }
         }
 
         // getReleases(episodeHtml, episodeUrl, seriesTitle, episodeNumber,

@@ -127,7 +127,11 @@ namespace NzbDrone.Core.AnimeSite
                 // folder so the rescan imports it in place rather than
                 // leaving it loose in the series root.
                 var season = SeasonTitleParser.Parse(show.Title).Season;
-                var fileName = FileNameSafe($"{series.Title} - S{season:00}E{episodeNumber:00} - Episode {episodeNumber}") + ".mp4";
+
+                // Include a quality tag so the rescan import isn't rejected
+                // for "Unknown" quality by the series' quality profile.
+                var quality = AnimeSiteReleaseResolver.QualityTag(release.Title) ?? "WEBDL-1080p";
+                var fileName = FileNameSafe($"{series.Title} - S{season:00}E{episodeNumber:00} - Episode {episodeNumber} [{quality}]") + ".mp4";
 
                 var folder = series.Path;
                 if (series.SeasonFolder)

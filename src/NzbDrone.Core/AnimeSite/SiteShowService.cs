@@ -598,10 +598,10 @@ namespace NzbDrone.Core.AnimeSite
             // that now match.
             UpgradeScrapeBackedSeries();
 
-            // Rescan the folders of every library series linked to this
-            // catalogue so the "in library" counters reflect what's
-            // actually on disk (and loose files get imported).
-            RescanLinkedSeries(message.SourceListId);
+            // Rescan the folders of every Site/AniList-backed series
+            // (regardless of which catalogue triggered this) so counters
+            // reflect what's on disk and loose files get imported.
+            RescanSyntheticSeries();
         }
 
         private void UpgradeScrapeBackedSeries()
@@ -674,51 +674,34 @@ namespace NzbDrone.Core.AnimeSite
             }
         }
 
-        private void RescanLinkedSeries(int sourceListId)
+        private void RescanSyntheticSeries()
         {
             try
             {
-                var shows = _repository.FindBySourceList(sourceListId);
-                if (shows.Count == 0)
+                var series = _seriesService.GetAllSeries()
+                    .Where(s => AniListSeriesIds.IsAniListId(s.TvdbId) || SiteSeriesIds.IsSiteId(s.TvdbId))
+                    .ToList();
+
+                if (series.Count == 0)
                 {
                     return;
                 }
 
-                var allSeries = _seriesService.GetAllSeries();
-                var linked = new HashSet<int>();
+                _logger.Debug("Sites refresh: refreshing + rescanning {0} Site/AniList series", series.Count);
 
-                foreach (var show in shows)
+                // Refresh first (rebuilds the episode list from metadata),
+                // then rescan (imports files against those episodes).
+                _commandQueueManager.Push(new RefreshSeriesCommand(series.Select(s => s.Id).ToList()));
+
+                foreach (var s in series)
                 {
-                    var match = allSeries.FirstOrDefault(s =>
-                        s.TvdbId == SiteSeriesIds.FromSiteShowId(show.Id) ||
-                        (show.AniListId > 0 &&
-                         (s.TvdbId == AniListSeriesIds.FromAniListId(show.AniListId) || s.AniListIds.Contains(show.AniListId))));
-
-                    if (match == null)
-                    {
-                        var clean = Parser.Parser.CleanSeriesTitle(SeasonTitleParser.Parse(show.Title).BaseTitle);
-                        match = string.IsNullOrEmpty(clean) ? null : allSeries.FirstOrDefault(s => s.CleanTitle == clean);
-                    }
-
-                    if (match != null)
-                    {
-                        linked.Add(match.Id);
-                    }
-                }
-
-                if (linked.Count > 0)
-                {
-                    _logger.Debug("Sites refresh: rescanning {0} linked series", linked.Count);
-                    foreach (var seriesId in linked)
-                    {
-                        RemoveDuplicateRootFiles(allSeries.First(s => s.Id == seriesId));
-                        _commandQueueManager.Push(new RescanSeriesCommand(seriesId));
-                    }
+                    RemoveDuplicateRootFiles(s);
+                    _commandQueueManager.Push(new RescanSeriesCommand(s.Id));
                 }
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Sites refresh: couldn't rescan linked series");
+                _logger.Warn(ex, "Sites refresh: couldn't rescan series");
             }
         }
 

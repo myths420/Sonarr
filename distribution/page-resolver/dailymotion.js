@@ -127,32 +127,58 @@ async function dailymotionFetch(req, res, query) {
     return res.end(JSON.stringify({ error: String(err.message || err) }));
   }
 
+  // Remux the whole thing to a real, seekable MP4 first (moov atom at the
+  // front via +faststart), THEN stream the file. A fragmented/streamed
+  // MP4 has no seek index, so skipping around shows macroblock garbage
+  // until the next keyframe -- this avoids that.
+  const outPath = path.join(built.dir, 'out.mp4');
+  const remux = () =>
+    new Promise((resolve, reject) => {
+      const ff = spawn('ffmpeg', [
+        '-hide_banner', '-loglevel', 'error',
+        '-allowed_extensions', 'ALL',
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+        '-fflags', '+genpts',
+        '-i', built.playlistPath,
+        '-map', '0',
+        '-c', 'copy',
+        '-bsf:a', 'aac_adtstoasc',
+        '-movflags', '+faststart',
+        '-y', outPath,
+      ]);
+      let errTail = '';
+      ff.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); process.stderr.write(d); });
+      ff.on('error', reject);
+      ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg exit ' + code + ': ' + errTail))));
+      req.on('close', () => { try { ff.kill('SIGKILL'); } catch (e) { /* */ } });
+    });
+
+  try {
+    await remux();
+  } catch (err) {
+    try { fs.rmSync(built.dir, { recursive: true, force: true }); } catch (e) { /* */ }
+    if (!res.headersSent) {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err.message || err) }));
+    } else {
+      res.destroy();
+    }
+    return;
+  }
+
+  const size = fs.statSync(outPath).size;
   res.writeHead(200, {
     'content-type': 'video/mp4',
+    'content-length': size,
     'content-disposition': `attachment; filename="dailymotion-${id}-${built.height}p.mp4"`,
   });
 
-  const ff = spawn('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error',
-    '-allowed_extensions', 'ALL',
-    '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-    '-i', built.playlistPath,
-    '-c', 'copy',
-    '-bsf:a', 'aac_adtstoasc',
-    '-f', 'mp4',
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    'pipe:1',
-  ]);
-  ff.stdout.pipe(res);
-  ff.stderr.on('data', (d) => process.stderr.write(d));
-  const cleanup = () => {
-    try { ff.kill('SIGKILL'); } catch (e) { /* */ }
-    try { fs.rmSync(built.dir, { recursive: true, force: true }); } catch (e) { /* */ }
-  };
-  ff.on('close', () => { try { fs.rmSync(built.dir, { recursive: true, force: true }); } catch (e) { /* */ } });
-  ff.on('error', () => { try { res.destroy(); } catch (e) { /* */ } cleanup(); });
-  req.on('close', cleanup);
-  res.on('close', cleanup);
+  const stream = fs.createReadStream(outPath);
+  stream.pipe(res);
+  const done = () => { try { fs.rmSync(built.dir, { recursive: true, force: true }); } catch (e) { /* */ } };
+  stream.on('close', done);
+  stream.on('error', () => { res.destroy(); done(); });
+  req.on('close', () => { stream.destroy(); done(); });
 }
 
 function hasFfmpeg() {

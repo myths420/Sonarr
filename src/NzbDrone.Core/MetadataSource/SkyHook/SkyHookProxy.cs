@@ -107,15 +107,22 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         // served locally so MediaCoverService can always cache it.
         private void EnsureSitePoster(Series series, int aniListId)
         {
-            if (series == null || series.Images.Any(i => i.CoverType == MediaCoverTypes.Poster))
+            if (series?.Images == null || series.Images.Any(i => i.CoverType == MediaCoverTypes.Poster))
             {
                 return;
             }
 
-            var localPoster = _siteScrapeSeriesInfoProxy.LocalPosterUrl(aniListId);
-            if (!string.IsNullOrWhiteSpace(localPoster))
+            try
             {
-                series.Images.Add(new MediaCover.MediaCover(MediaCoverTypes.Poster, localPoster));
+                var localPoster = _siteScrapeSeriesInfoProxy.LocalPosterUrl(aniListId);
+                if (!string.IsNullOrWhiteSpace(localPoster))
+                {
+                    series.Images.Add(new MediaCover.MediaCover(MediaCoverTypes.Poster, localPoster));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Couldn't add a site poster fallback for AniList {0}", aniListId);
             }
         }
 

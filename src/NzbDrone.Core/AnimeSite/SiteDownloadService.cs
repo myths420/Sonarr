@@ -141,6 +141,7 @@ namespace NzbDrone.Core.AnimeSite
             };
 
             _downloads[download.DownloadId] = download;
+            PruneHistory();
 
             _ = Task.Run(() => RunDownloadAsync(download, candidates, download.Cts.Token));
 
@@ -150,6 +151,22 @@ namespace NzbDrone.Core.AnimeSite
         public List<SiteDownload> GetDownloads()
         {
             return _downloads.Values.OrderByDescending(d => d.StartedAt).ToList();
+        }
+
+        // Keep the tracker from growing without bound after a big grab --
+        // drop finished entries beyond the most recent 100.
+        private static void PruneHistory()
+        {
+            var finished = _downloads.Values
+                .Where(d => d.Status is SiteDownloadStatus.Completed or SiteDownloadStatus.Failed)
+                .OrderByDescending(d => d.StartedAt)
+                .Skip(100)
+                .ToList();
+
+            foreach (var old in finished)
+            {
+                _downloads.TryRemove(old.DownloadId, out _);
+            }
         }
 
         public bool CancelDownload(string downloadId)

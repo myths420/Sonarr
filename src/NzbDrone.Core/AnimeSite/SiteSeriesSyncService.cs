@@ -43,11 +43,21 @@ namespace NzbDrone.Core.AnimeSite
                 return;
             }
 
-            var seriesIds = aniListSeries.Select(s => s.Id).ToList();
-
-            _commandQueueManager.Push(new RefreshSeriesCommand(seriesIds), trigger: CommandTrigger.Scheduled);
-
             var now = DateTime.UtcNow;
+
+            // Refresh only the series that haven't been refreshed recently
+            // -- Sonarr's own 12h refresh already covers the rest, and
+            // re-fetching every synthetic series every 6h hammers AniList.
+            var staleIds = aniListSeries
+                .Where(s => s.LastInfoSync == null || now - s.LastInfoSync.Value > TimeSpan.FromHours(20))
+                .Select(s => s.Id)
+                .ToList();
+
+            if (staleIds.Count > 0)
+            {
+                _commandQueueManager.Push(new RefreshSeriesCommand(staleIds), trigger: CommandTrigger.Scheduled);
+            }
+
             var wanted = new List<int>();
 
             foreach (var series in aniListSeries)

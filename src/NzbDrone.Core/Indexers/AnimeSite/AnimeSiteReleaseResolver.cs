@@ -129,8 +129,18 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         private static IEnumerable<ResolvedRelease> DailymotionReleases(AnimeSiteFetchOptions fetch, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
         {
-            if (fetch == null || !fetch.UsesResolver || string.IsNullOrEmpty(episodeHtml))
+            if (string.IsNullOrEmpty(episodeHtml))
             {
+                yield break;
+            }
+
+            if (fetch == null || !fetch.UsesResolver)
+            {
+                if (episodeHtml.Contains("dailymotion.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.Warn("{0} episode {1} has a Dailymotion embed but this indexer has no Page Resolver URL set -- set it (e.g. http://page-resolver:3000) to download from Dailymotion.", seriesTitle, episodeNumber);
+                }
+
                 yield break;
             }
 

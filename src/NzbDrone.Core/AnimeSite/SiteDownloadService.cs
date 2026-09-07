@@ -9,6 +9,7 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients.DirectHttp;
 using NzbDrone.Core.Indexers.AnimeSite;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
@@ -40,10 +41,11 @@ namespace NzbDrone.Core.AnimeSite
         private static readonly ConcurrentDictionary<string, SiteDownload> _downloads = new();
 
         // Cap concurrent Sites downloads so a range grab doesn't start 20
-        // streams at once. Env override: SITE_MAX_CONCURRENT_DOWNLOADS.
-        private static readonly SemaphoreSlim _downloadGate = new(
-            int.TryParse(Environment.GetEnvironmentVariable("SITE_MAX_CONCURRENT_DOWNLOADS"), out var m) && m > 0 ? m : 3,
-            int.TryParse(Environment.GetEnvironmentVariable("SITE_MAX_CONCURRENT_DOWNLOADS"), out var m2) && m2 > 0 ? m2 : 3);
+        // streams at once. Follows the Direct HTTP client's "Max Concurrent
+        // Downloads" setting; SITE_MAX_CONCURRENT_DOWNLOADS env overrides.
+        private static readonly object _gateLock = new();
+        private static SemaphoreSlim _downloadGate;
+        private static int _downloadGateMax;
 
         private readonly ISiteShowService _siteShowService;
         private readonly ISiteShowRepository _siteShowRepository;
@@ -52,6 +54,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly IEpisodeService _episodeService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IBuildFileNames _fileNameBuilder;
+        private readonly IDownloadClientFactory _downloadClientFactory;
         private readonly IHttpClient _httpClient;
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
@@ -63,6 +66,7 @@ namespace NzbDrone.Core.AnimeSite
                                    IEpisodeService episodeService,
                                    IMediaFileService mediaFileService,
                                    IBuildFileNames fileNameBuilder,
+                                   IDownloadClientFactory downloadClientFactory,
                                    IHttpClient httpClient,
                                    IDiskProvider diskProvider,
                                    Logger logger)
@@ -72,6 +76,7 @@ namespace NzbDrone.Core.AnimeSite
             _rootFolderService = rootFolderService;
             _commandQueueManager = commandQueueManager;
             _fileNameBuilder = fileNameBuilder;
+            _downloadClientFactory = downloadClientFactory;
             _episodeService = episodeService;
             _mediaFileService = mediaFileService;
             _httpClient = httpClient;
@@ -196,6 +201,53 @@ namespace NzbDrone.Core.AnimeSite
             return true;
         }
 
+        // Concurrency limit: SITE_MAX_CONCURRENT_DOWNLOADS env if set,
+        // otherwise the Direct HTTP client's "Max Concurrent Downloads"
+        // setting, otherwise 3. Rebuilt when the number changes.
+        private SemaphoreSlim GetDownloadGate()
+        {
+            var max = 0;
+
+            if (int.TryParse(Environment.GetEnvironmentVariable("SITE_MAX_CONCURRENT_DOWNLOADS"), out var env) && env > 0)
+            {
+                max = env;
+            }
+            else
+            {
+                try
+                {
+                    var settings = _downloadClientFactory.All()
+                        .Select(d => d.Settings)
+                        .OfType<DirectHttpDownloadClientSettings>()
+                        .FirstOrDefault();
+                    if (settings is { MaxConcurrentDownloads: > 0 })
+                    {
+                        max = settings.MaxConcurrentDownloads;
+                    }
+                }
+                catch
+                {
+                    // fall through to the default
+                }
+            }
+
+            if (max <= 0)
+            {
+                max = 3;
+            }
+
+            lock (_gateLock)
+            {
+                if (_downloadGate == null || _downloadGateMax != max)
+                {
+                    _downloadGate = new SemaphoreSlim(max, max);
+                    _downloadGateMax = max;
+                }
+
+                return _downloadGate;
+            }
+        }
+
         // Tries each candidate release in order until one downloads
         // cleanly. A text/html response (landing page) or any error moves
         // on to the next -- so a dead Mediafire mirror falls through to the
@@ -203,10 +255,11 @@ namespace NzbDrone.Core.AnimeSite
         private async Task RunDownloadAsync(SiteDownload download, List<ResolvedRelease> candidates, CancellationToken token)
         {
             var partPath = download.OutputPath + ".part";
+            var gate = GetDownloadGate();
 
             try
             {
-                await _downloadGate.WaitAsync(token);
+                await gate.WaitAsync(token);
             }
             catch (OperationCanceledException)
             {
@@ -282,7 +335,7 @@ namespace NzbDrone.Core.AnimeSite
             }
             finally
             {
-                _downloadGate.Release();
+                gate.Release();
 
                 if (File.Exists(partPath))
                 {

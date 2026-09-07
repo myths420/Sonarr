@@ -7,6 +7,7 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
+using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource.AniList;
@@ -572,6 +573,58 @@ namespace NzbDrone.Core.AnimeSite
 
             var manual = message.Trigger == CommandTrigger.Manual;
             BackfillMetadata(message.SourceListId, manual ? 75 : DefaultBackfillLimit, manual);
+
+            // Rescan the folders of every library series linked to this
+            // catalogue so the "in library" counters reflect what's
+            // actually on disk (and loose files get imported).
+            RescanLinkedSeries(message.SourceListId);
+        }
+
+        private void RescanLinkedSeries(int sourceListId)
+        {
+            try
+            {
+                var shows = _repository.FindBySourceList(sourceListId);
+                if (shows.Count == 0)
+                {
+                    return;
+                }
+
+                var allSeries = _seriesService.GetAllSeries();
+                var linked = new HashSet<int>();
+
+                foreach (var show in shows)
+                {
+                    var match = allSeries.FirstOrDefault(s =>
+                        s.TvdbId == SiteSeriesIds.FromSiteShowId(show.Id) ||
+                        (show.AniListId > 0 &&
+                         (s.TvdbId == AniListSeriesIds.FromAniListId(show.AniListId) || s.AniListIds.Contains(show.AniListId))));
+
+                    if (match == null)
+                    {
+                        var clean = Parser.Parser.CleanSeriesTitle(SeasonTitleParser.Parse(show.Title).BaseTitle);
+                        match = string.IsNullOrEmpty(clean) ? null : allSeries.FirstOrDefault(s => s.CleanTitle == clean);
+                    }
+
+                    if (match != null)
+                    {
+                        linked.Add(match.Id);
+                    }
+                }
+
+                if (linked.Count > 0)
+                {
+                    _logger.Debug("Sites refresh: rescanning {0} linked series", linked.Count);
+                    foreach (var seriesId in linked)
+                    {
+                        _commandQueueManager.Push(new RescanSeriesCommand(seriesId));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Sites refresh: couldn't rescan linked series");
+            }
         }
 
         public void Execute(SiteAddAllCommand message)

@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
@@ -80,6 +83,8 @@ namespace NzbDrone.Core.AnimeSite
         private readonly IDiskProvider _diskProvider;
         private readonly IAnimeSiteFetcher _fetcher;
         private readonly Lazy<ISiteDownloadService> _siteDownloadService;
+        private readonly IEpisodeService _episodeService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly Logger _logger;
 
         public SiteShowService(ISiteShowRepository repository,
@@ -97,6 +102,8 @@ namespace NzbDrone.Core.AnimeSite
                                IDiskProvider diskProvider,
                                IAnimeSiteFetcher fetcher,
                                Lazy<ISiteDownloadService> siteDownloadService,
+                               IEpisodeService episodeService,
+                               IMediaFileService mediaFileService,
                                Logger logger)
         {
             _repository = repository;
@@ -114,6 +121,8 @@ namespace NzbDrone.Core.AnimeSite
             _diskProvider = diskProvider;
             _fetcher = fetcher;
             _siteDownloadService = siteDownloadService;
+            _episodeService = episodeService;
+            _mediaFileService = mediaFileService;
             _logger = logger;
         }
 
@@ -702,6 +711,7 @@ namespace NzbDrone.Core.AnimeSite
                     _logger.Debug("Sites refresh: rescanning {0} linked series", linked.Count);
                     foreach (var seriesId in linked)
                     {
+                        RemoveDuplicateRootFiles(allSeries.First(s => s.Id == seriesId));
                         _commandQueueManager.Push(new RescanSeriesCommand(seriesId));
                     }
                 }
@@ -709,6 +719,70 @@ namespace NzbDrone.Core.AnimeSite
             catch (Exception ex)
             {
                 _logger.Warn(ex, "Sites refresh: couldn't rescan linked series");
+            }
+        }
+
+        // Sites downloads used to land loose in the series root instead of
+        // the season folder. Delete a loose root video file when its
+        // episode is already imported from a file inside a subfolder --
+        // leave the ones that are still the only copy.
+        private void RemoveDuplicateRootFiles(Series series)
+        {
+            try
+            {
+                if (series == null || string.IsNullOrWhiteSpace(series.Path) || !_diskProvider.FolderExists(series.Path))
+                {
+                    return;
+                }
+
+                var rootFiles = _diskProvider.GetFiles(series.Path, false)
+                    .Where(f => new[] { ".mp4", ".mkv", ".avi", ".m4v" }.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .ToList();
+
+                if (rootFiles.Count == 0)
+                {
+                    return;
+                }
+
+                var filesBySeries = _mediaFileService.GetFilesBySeries(series.Id);
+
+                foreach (var loose in rootFiles)
+                {
+                    var name = Path.GetFileNameWithoutExtension(loose);
+                    var m = Regex.Match(name, @"[Ss](\d{1,2})[Ee](\d{1,3})");
+                    if (!m.Success)
+                    {
+                        continue;
+                    }
+
+                    var season = int.Parse(m.Groups[1].Value);
+                    var number = int.Parse(m.Groups[2].Value);
+
+                    var episode = _episodeService.FindEpisode(series.Id, season, number);
+                    if (episode is not { EpisodeFileId: > 0 })
+                    {
+                        continue;
+                    }
+
+                    var importedFile = filesBySeries.FirstOrDefault(f => f.Id == episode.EpisodeFileId);
+                    var importedPath = importedFile?.Path;
+
+                    // Only delete when the tracked file is a *different*,
+                    // subfolder file -- never the loose one itself.
+                    if (string.IsNullOrEmpty(importedPath) ||
+                        string.Equals(Path.GetFullPath(importedPath), Path.GetFullPath(loose), StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Path.GetDirectoryName(importedPath), series.Path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    _logger.Info("Sites refresh: deleting duplicate loose file '{0}' (S{1:00}E{2:00} already imported to '{3}')", loose, season, number, importedPath);
+                    _diskProvider.DeleteFile(loose);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Sites refresh: duplicate cleanup failed for '{0}'", series?.Title);
             }
         }
 

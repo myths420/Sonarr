@@ -7,7 +7,6 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.ImportLists.AnimeSite;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.AnimeSite;
-using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource.AniList;
@@ -79,6 +78,7 @@ namespace NzbDrone.Core.AnimeSite
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IDiskProvider _diskProvider;
         private readonly IAnimeSiteFetcher _fetcher;
+        private readonly Lazy<ISiteDownloadService> _siteDownloadService;
         private readonly Logger _logger;
 
         public SiteShowService(ISiteShowRepository repository,
@@ -95,6 +95,7 @@ namespace NzbDrone.Core.AnimeSite
                                IManageCommandQueue commandQueueManager,
                                IDiskProvider diskProvider,
                                IAnimeSiteFetcher fetcher,
+                               Lazy<ISiteDownloadService> siteDownloadService,
                                Logger logger)
         {
             _repository = repository;
@@ -111,6 +112,7 @@ namespace NzbDrone.Core.AnimeSite
             _qualityProfileService = qualityProfileService;
             _diskProvider = diskProvider;
             _fetcher = fetcher;
+            _siteDownloadService = siteDownloadService;
             _logger = logger;
         }
 
@@ -584,46 +586,64 @@ namespace NzbDrone.Core.AnimeSite
             var added = 0;
             var skipped = 0;
             var failed = 0;
-            var seriesIds = new HashSet<int>();
+            var queued = 0;
+
+            var download = message.SearchForMissingEpisodes;
+            var verb = download ? "Download All" : "Add All";
 
             for (var i = 0; i < shows.Count; i++)
             {
                 var show = shows[i];
-                _logger.ProgressInfo("Add All: {0}/{1} - {2}", i + 1, shows.Count, show.Title);
+                _logger.ProgressInfo("{0}: {1}/{2} - {3}", verb, i + 1, shows.Count, show.Title);
 
+                // AddAsSeries returns the existing series when already
+                // present, so this stays idempotent. A failure here (e.g.
+                // AniList metadata unavailable) must not stop the download
+                // loop -- StartDownload auto-creates the series anyway.
                 try
                 {
-                    // Search is kicked off once per series below so shows
-                    // already in the library still get a grab.
-                    var series = AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, false);
-                    if (series != null)
+                    if (AddAsSeries(show.Id, message.RootFolderPath, message.QualityProfileId, false) != null)
                     {
                         added++;
-                        seriesIds.Add(series.Id);
                     }
                 }
                 catch (SiteSeriesAddException ex)
                 {
                     skipped++;
-                    _logger.Debug("Add All: skipped '{0}': {1}", show.Title, ex.Message);
+                    _logger.Debug("{0}: '{1}' not added to the library: {2}", verb, show.Title, ex.Message);
                 }
                 catch (Exception ex)
                 {
                     failed++;
-                    _logger.Warn(ex, "Add All: failed to add '{0}'", show.Title);
+                    _logger.Warn(ex, "{0}: add failed for '{1}'", verb, show.Title);
                 }
-            }
 
-            _logger.Info("Add All for indexer {0}: {1} added, {2} skipped (no metadata / already present), {3} failed", message.SourceListId, added, skipped, failed);
-
-            if (message.SearchForMissingEpisodes && seriesIds.Count > 0)
-            {
-                _logger.Info("Download All: queuing episode search for {0} series", seriesIds.Count);
-                foreach (var seriesId in seriesIds)
+                if (!download)
                 {
-                    _commandQueueManager.Push(new SeriesSearchCommand(seriesId));
+                    continue;
+                }
+
+                // Same path as clicking Download on a poster: pull each
+                // episode straight from this site's downloader, no indexer
+                // search / download client involved.
+                try
+                {
+                    foreach (var episode in GetEpisodes(show.Id))
+                    {
+                        if (_siteDownloadService.Value.StartDownload(show.Id, episode.Number) != null)
+                        {
+                            queued++;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    _logger.Warn(ex, "{0}: episode download failed for '{1}'", verb, show.Title);
                 }
             }
+
+            _logger.Info("{0} for indexer {1}: {2} added, {3} skipped, {4} failed, {5} episode download(s) queued", verb, message.SourceListId, added, skipped, failed, queued);
         }
 
         // Drop a site's catalogue rows when its indexer is deleted.

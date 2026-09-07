@@ -12,6 +12,7 @@ using NzbDrone.Core.Localization;
 using NzbDrone.Core.MetadataSource.AniList;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.Indexers.AnimeSite
 {
@@ -88,12 +89,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         public override Task<IList<ReleaseInfo>> Fetch(AnimeEpisodeSearchCriteria searchCriteria)
         {
-            // A synthetic Site/AniList-backed series (added from the Sites
-            // catalogue) isn't findable by a site title search -- resolve it
-            // straight from the catalogue row instead. This is also what
-            // makes SiteSeriesSync's auto-download of new episodes work.
-            var tvdbId = searchCriteria.Series?.TvdbId ?? 0;
-            if (AniListSeriesIds.IsAniListId(tvdbId) || SiteSeriesIds.IsSiteId(tvdbId))
+            if (IsSynthetic(searchCriteria))
             {
                 return Task.FromResult(FetchSynthetic(searchCriteria));
             }
@@ -103,37 +99,83 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return base.Fetch(searchCriteria);
         }
 
-        private IList<ReleaseInfo> FetchSynthetic(AnimeEpisodeSearchCriteria searchCriteria)
+        public override Task<IList<ReleaseInfo>> Fetch(SingleEpisodeSearchCriteria searchCriteria)
+        {
+            if (IsSynthetic(searchCriteria))
+            {
+                return Task.FromResult(FetchSynthetic(searchCriteria));
+            }
+
+            return base.Fetch(searchCriteria);
+        }
+
+        public override Task<IList<ReleaseInfo>> Fetch(SeasonSearchCriteria searchCriteria)
+        {
+            if (IsSynthetic(searchCriteria))
+            {
+                return Task.FromResult(FetchSynthetic(searchCriteria));
+            }
+
+            return base.Fetch(searchCriteria);
+        }
+
+        // A synthetic Site/AniList-backed series (added from the Sites
+        // catalogue) isn't findable by a site title search -- resolve it
+        // straight from the catalogue row instead. This is also what makes
+        // SiteSeriesSync's auto-download of new episodes work, and what the
+        // "search" button on the series page uses.
+        private static bool IsSynthetic(SearchCriteriaBase searchCriteria)
+        {
+            var tvdbId = searchCriteria.Series?.TvdbId ?? 0;
+            return AniListSeriesIds.IsAniListId(tvdbId) || SiteSeriesIds.IsSiteId(tvdbId);
+        }
+
+        private IList<ReleaseInfo> FetchSynthetic(SearchCriteriaBase searchCriteria)
         {
             var releases = new List<ReleaseInfo>();
-            try
-            {
-                var resolved = _siteShowService.Value.ResolveReleasesForSeries(
-                    searchCriteria.Series,
-                    searchCriteria.SeasonNumber,
-                    searchCriteria.EpisodeNumber);
+            var series = searchCriteria.Series;
 
-                foreach (var r in resolved.Where(r => !string.IsNullOrEmpty(r.Url)))
-                {
-                    releases.Add(new ReleaseInfo
-                    {
-                        Guid = r.Url,
-                        Title = !string.IsNullOrEmpty(r.Title)
-                            ? r.Title
-                            : $"{searchCriteria.Series.Title} - S{searchCriteria.SeasonNumber:00}E{searchCriteria.EpisodeNumber:00}",
-                        DownloadUrl = r.Url,
-                        InfoUrl = r.Url,
-                        Size = 0,
-                        PublishDate = DateTime.UtcNow,
-                        DownloadProtocol = DownloadProtocol.Torrent,
-                        IndexerId = Definition.Id,
-                        Indexer = Definition.Name,
-                    });
-                }
-            }
-            catch (Exception ex)
+            var episodes = (searchCriteria.Episodes ?? new List<Episode>())
+                .Where(e => e != null)
+                .Select(e => (e.SeasonNumber, e.EpisodeNumber))
+                .Distinct()
+                .ToList();
+
+            if (searchCriteria is AnimeEpisodeSearchCriteria anime && episodes.Count == 0)
             {
-                _logger.Warn(ex, "AnimeSite: failed to resolve releases for synthetic series '{0}'", searchCriteria.Series?.Title);
+                episodes.Add((anime.SeasonNumber, anime.EpisodeNumber));
+            }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (seasonNumber, episodeNumber) in episodes)
+            {
+                try
+                {
+                    var resolved = _siteShowService.Value.ResolveReleasesForSeries(series, seasonNumber, episodeNumber);
+
+                    foreach (var r in resolved.Where(r => !string.IsNullOrEmpty(r.Url) && seen.Add(r.Url)))
+                    {
+                        releases.Add(new ReleaseInfo
+                        {
+                            Guid = r.Url,
+                            Title = !string.IsNullOrEmpty(r.Title)
+                                ? r.Title
+                                : $"{series.Title} - S{seasonNumber:00}E{episodeNumber:00}",
+                            DownloadUrl = r.Url,
+                            InfoUrl = r.Url,
+                            Size = 0,
+                            PublishDate = DateTime.UtcNow,
+                            DownloadProtocol = DownloadProtocol.Torrent,
+                            IndexerId = Definition.Id,
+                            Indexer = Definition.Name,
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "AnimeSite: failed to resolve releases for synthetic series '{0}' S{1}E{2}", series?.Title, seasonNumber, episodeNumber);
+                }
             }
 
             return releases;

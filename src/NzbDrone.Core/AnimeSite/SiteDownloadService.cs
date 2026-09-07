@@ -9,8 +9,12 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Indexers.AnimeSite;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Tv;
 
@@ -20,7 +24,9 @@ namespace NzbDrone.Core.AnimeSite
     {
         // Resolves releases for the episode and downloads the top pick, or
         // the one matching releaseUrl. Returns null if nothing resolved.
-        SiteDownload StartDownload(int showId, int episodeNumber, string releaseUrl = null);
+        // When skipIfPresent is set, an episode already in the library is
+        // skipped unless the site release parses to a higher quality.
+        SiteDownload StartDownload(int showId, int episodeNumber, string releaseUrl = null, bool skipIfPresent = false);
 
         List<SiteDownload> GetDownloads();
 
@@ -42,6 +48,8 @@ namespace NzbDrone.Core.AnimeSite
         private readonly ISiteShowRepository _siteShowRepository;
         private readonly IRootFolderService _rootFolderService;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IEpisodeService _episodeService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly IHttpClient _httpClient;
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
@@ -50,6 +58,8 @@ namespace NzbDrone.Core.AnimeSite
                                    ISiteShowRepository siteShowRepository,
                                    IRootFolderService rootFolderService,
                                    IManageCommandQueue commandQueueManager,
+                                   IEpisodeService episodeService,
+                                   IMediaFileService mediaFileService,
                                    IHttpClient httpClient,
                                    IDiskProvider diskProvider,
                                    Logger logger)
@@ -58,12 +68,14 @@ namespace NzbDrone.Core.AnimeSite
             _siteShowRepository = siteShowRepository;
             _rootFolderService = rootFolderService;
             _commandQueueManager = commandQueueManager;
+            _episodeService = episodeService;
+            _mediaFileService = mediaFileService;
             _httpClient = httpClient;
             _diskProvider = diskProvider;
             _logger = logger;
         }
 
-        public SiteDownload StartDownload(int showId, int episodeNumber, string releaseUrl = null)
+        public SiteDownload StartDownload(int showId, int episodeNumber, string releaseUrl = null, bool skipIfPresent = false)
         {
             var releases = _siteShowService.ResolveEpisodeReleases(showId, episodeNumber);
             var release = string.IsNullOrWhiteSpace(releaseUrl)
@@ -81,6 +93,16 @@ namespace NzbDrone.Core.AnimeSite
             // Auto-create the series so the file lands in its folder and the
             // post-download rescan imports it.
             var series = TryEnsureSeries(showId);
+
+            if (skipIfPresent && series != null)
+            {
+                var haveSeason = SeasonTitleParser.Parse(show.Title).Season;
+                if (HaveEqualOrBetterCopy(series, haveSeason, episodeNumber, release))
+                {
+                    _logger.Debug("Sites: '{0}' S{1:00}E{2:00} already in the library at an equal or better quality -- skipping", show.Title, haveSeason, episodeNumber);
+                    return null;
+                }
+            }
 
             string outputPath;
             if (series != null && !string.IsNullOrWhiteSpace(series.Path))
@@ -239,6 +261,42 @@ namespace NzbDrone.Core.AnimeSite
                 {
                     File.Delete(partPath);
                 }
+            }
+        }
+
+        // True when the episode already has a file and the site release
+        // doesn't parse to a strictly higher quality.
+        private bool HaveEqualOrBetterCopy(Series series, int seasonNumber, int episodeNumber, ResolvedRelease release)
+        {
+            var episode = _episodeService.FindEpisode(series.Id, seasonNumber, episodeNumber);
+            if (episode is not { HasFile: true })
+            {
+                return false;
+            }
+
+            var file = episode.EpisodeFileId > 0 ? _mediaFileService.Get(episode.EpisodeFileId) : null;
+            if (file?.Quality?.Quality == null)
+            {
+                // Have something, can't read its quality -- keep it.
+                return true;
+            }
+
+            var candidate = QualityParser.ParseQuality(release.Title ?? string.Empty);
+            if (candidate?.Quality == null || candidate.Quality == Quality.Unknown)
+            {
+                // Can't tell the site release is any better -- keep existing.
+                return true;
+            }
+
+            try
+            {
+                var comparer = new QualityModelComparer(series.QualityProfile.Value);
+                return comparer.Compare(candidate, file.Quality) <= 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Sites: quality comparison failed for '{0}' -- keeping existing file", series.Title);
+                return true;
             }
         }
 

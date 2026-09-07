@@ -630,7 +630,9 @@ namespace NzbDrone.Core.AnimeSite
                 {
                     foreach (var episode in GetEpisodes(show.Id))
                     {
-                        if (_siteDownloadService.Value.StartDownload(show.Id, episode.Number) != null)
+                        // Skip episodes already in the library unless the
+                        // site has a higher-quality release.
+                        if (_siteDownloadService.Value.StartDownload(show.Id, episode.Number, releaseUrl: null, skipIfPresent: true) != null)
                         {
                             queued++;
                         }

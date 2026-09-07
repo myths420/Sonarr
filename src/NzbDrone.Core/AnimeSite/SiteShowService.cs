@@ -392,8 +392,12 @@ namespace NzbDrone.Core.AnimeSite
             var aniListId = show.AniListId;
             if (aniListId <= 0)
             {
-                // Not backfilled yet; look it up now.
-                aniListId = _metadataProvider.Lookup(show.Title)?.AniListId ?? 0;
+                // Not backfilled yet; look it up now -- try the full title,
+                // then the season-stripped base (AniList search does badly
+                // with "... Season 3" / typo'd suffixes).
+                aniListId = _metadataProvider.Lookup(show.Title)?.AniListId
+                    ?? _metadataProvider.Lookup(SeasonTitleParser.Parse(show.Title).BaseTitle)?.AniListId
+                    ?? 0;
             }
 
             // AniList-backed when a match exists, otherwise scrape-backed.
@@ -580,10 +584,85 @@ namespace NzbDrone.Core.AnimeSite
             var manual = message.Trigger == CommandTrigger.Manual;
             BackfillMetadata(message.SourceListId, manual ? 75 : DefaultBackfillLimit, manual);
 
+            // Shows added while AniList was unreachable are scrape-backed
+            // and don't fold. Retry the AniList lookup and migrate any
+            // that now match.
+            UpgradeScrapeBackedSeries();
+
             // Rescan the folders of every library series linked to this
             // catalogue so the "in library" counters reflect what's
             // actually on disk (and loose files get imported).
             RescanLinkedSeries(message.SourceListId);
+        }
+
+        private void UpgradeScrapeBackedSeries()
+        {
+            List<Series> scrapeBacked;
+            try
+            {
+                scrapeBacked = _seriesService.GetAllSeries()
+                    .Where(s => SiteSeriesIds.IsSiteId(s.TvdbId))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Metadata upgrade: couldn't list scrape-backed series");
+                return;
+            }
+
+            if (scrapeBacked.Count == 0)
+            {
+                return;
+            }
+
+            var upgraded = 0;
+            foreach (var series in scrapeBacked)
+            {
+                try
+                {
+                    var show = _repository.Get(SiteSeriesIds.ToSiteShowId(series.TvdbId));
+                    if (show == null)
+                    {
+                        continue;
+                    }
+
+                    var baseTitle = SeasonTitleParser.Parse(show.Title).BaseTitle;
+                    var aniListId = _metadataProvider.Lookup(show.Title)?.AniListId
+                        ?? _metadataProvider.Lookup(baseTitle)?.AniListId
+                        ?? 0;
+
+                    if (aniListId <= 0)
+                    {
+                        continue;
+                    }
+
+                    var existingAniList = _seriesService.GetAllSeries().FirstOrDefault(s =>
+                        s.Id != series.Id &&
+                        (s.TvdbId == AniListSeriesIds.FromAniListId(aniListId) || s.AniListIds.Contains(aniListId)));
+
+                    if (existingAniList != null)
+                    {
+                        _logger.Warn("Metadata upgrade: '{0}' (series {1}) matches AniList {2} but series {3} '{4}' already holds it -- move its files there and delete the duplicate.", show.Title, series.Id, aniListId, existingAniList.Id, existingAniList.Title);
+                        continue;
+                    }
+
+                    _logger.Info("Metadata upgrade: migrating scrape-backed series {0} '{1}' to AniList {2}", series.Id, series.Title, aniListId);
+                    series.TvdbId = AniListSeriesIds.FromAniListId(aniListId);
+                    series.AniListIds.Add(aniListId);
+                    _seriesService.UpdateSeries(series, publishUpdatedEvent: false);
+                    _commandQueueManager.Push(new RefreshSeriesCommand(new List<int> { series.Id }));
+                    upgraded++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Metadata upgrade: failed for series {0}", series.Id);
+                }
+            }
+
+            if (upgraded > 0)
+            {
+                _logger.Info("Metadata upgrade: migrated {0} scrape-backed series to AniList", upgraded);
+            }
         }
 
         private void RescanLinkedSeries(int sourceListId)

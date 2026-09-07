@@ -20,6 +20,11 @@ namespace NzbDrone.Core.AnimeSite
     public interface ISiteScrapeSeriesInfoProxy
     {
         Tuple<Series, List<Episode>> GetSeriesInfo(int siteShowId);
+
+        // Local, always-reachable poster URL for the catalogue show behind
+        // this AniList id, or null if there's no site poster to serve.
+        // Used as a fallback when AniList has no cover image.
+        string LocalPosterUrl(int aniListId);
     }
 
     public class SiteScrapeSeriesInfoProxy : ISiteScrapeSeriesInfoProxy
@@ -170,6 +175,17 @@ namespace NzbDrone.Core.AnimeSite
             }
 
             return null;
+        }
+
+        public string LocalPosterUrl(int aniListId)
+        {
+            if (aniListId <= 0)
+            {
+                return null;
+            }
+
+            var show = _siteShowRepository.FindByAniListId(aniListId);
+            return show == null ? null : PosterUrlFor(show);
         }
 
         private string PosterUrlFor(SiteShow show)

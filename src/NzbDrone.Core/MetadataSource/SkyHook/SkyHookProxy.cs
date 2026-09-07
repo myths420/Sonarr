@@ -60,9 +60,12 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                     ? existing.AniListIds.ToList()
                     : new List<int> { AniListSeriesIds.ToAniListId(tvdbSeriesId) };
 
-                return ids.Count > 1
+                var tuple = ids.Count > 1
                     ? _aniListSeriesInfoProxy.GetSeriesInfo(ids)
                     : _aniListSeriesInfoProxy.GetSeriesInfo(ids[0]);
+
+                EnsureSitePoster(tuple.Item1, ids[0]);
+                return tuple;
             }
 
             // Catalogue show with no AniList match (see SiteSeriesIds).
@@ -97,6 +100,23 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             var series = MapSeries(httpResponse.Resource);
 
             return new Tuple<Series, List<Episode>>(series, episodes.ToList());
+        }
+
+        // AniList sometimes has no cover image (or the CDN is unreachable
+        // during an outage). Fall back to the catalogue show's own poster,
+        // served locally so MediaCoverService can always cache it.
+        private void EnsureSitePoster(Series series, int aniListId)
+        {
+            if (series == null || series.Images.Any(i => i.CoverType == MediaCoverTypes.Poster))
+            {
+                return;
+            }
+
+            var localPoster = _siteScrapeSeriesInfoProxy.LocalPosterUrl(aniListId);
+            if (!string.IsNullOrWhiteSpace(localPoster))
+            {
+                series.Images.Add(new MediaCover.MediaCover(MediaCoverTypes.Poster, localPoster));
+            }
         }
 
         public List<Series> SearchForNewSeriesByImdbId(string imdbId)

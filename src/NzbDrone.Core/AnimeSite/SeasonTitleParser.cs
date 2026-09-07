@@ -12,8 +12,9 @@ namespace NzbDrone.Core.AnimeSite
         // "2nd Season", "Part 2", "S3", trailing "... 2".
         private static readonly Regex[] SeasonPatterns =
         {
-            new Regex(@"\s+season\s+(\d{1,2})\b.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            new Regex(@"\s+(\d{1,2})(?:st|nd|rd|th)\s+season\b.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            // "season", plus common scraper typos: "seaon", "seson", "sason".
+            new Regex(@"\s+se?as?on\s+(\d{1,2})\b.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            new Regex(@"\s+(\d{1,2})(?:st|nd|rd|th)\s+se?as?on\b.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled),
             new Regex(@"\s+part\s+(\d{1,2})\b.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled),
             new Regex(@"\s+s(\d{1,2})\b.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled),
             new Regex(@"\s+(\d{1,2})\s*$", RegexOptions.Compiled),

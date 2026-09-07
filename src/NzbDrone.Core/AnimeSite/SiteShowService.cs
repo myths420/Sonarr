@@ -413,6 +413,8 @@ namespace NzbDrone.Core.AnimeSite
             // adding a poster of its own. Match the base show by cleaned
             // title (its own, or with a season suffix stripped).
             var seasonInfo = SeasonTitleParser.Parse(show.Title);
+            _logger.Debug("AddAsSeries '{0}': base '{1}', season {2}, hasSeason {3}, aniList {4}", show.Title, seasonInfo.BaseTitle, seasonInfo.Season, seasonInfo.HasSeason, aniListId);
+
             if (seasonInfo.HasSeason)
             {
                 var baseClean = seasonInfo.BaseTitle.CleanSeriesTitle();
@@ -420,7 +422,11 @@ namespace NzbDrone.Core.AnimeSite
                     s.CleanTitle == baseClean ||
                     SeasonTitleParser.Parse(s.Title).BaseTitle.CleanSeriesTitle() == baseClean);
 
-                if (baseSeries != null)
+                if (baseSeries == null)
+                {
+                    _logger.Debug("AddAsSeries '{0}': no existing series matched base clean-title '{1}' -- adding as its own series", show.Title, baseClean);
+                }
+                else
                 {
                     // AniList-backed base: record this season's id and refresh
                     // so the proxy rebuilds Season 1..N. A TheTVDB base already

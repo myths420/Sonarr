@@ -78,7 +78,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 }
 
                 var episodeHtml = _fetcher.GetHtml(episodeLink, animeLink, _fetch);
-                releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeLink, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeLink));
+                releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeLink, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeLink, SeriesTitle, AbsoluteEpisodeNumber));
             }
             catch (Exception ex)
             {
@@ -122,7 +122,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 }
 
                 var episodeHtml = host.Get(episodeUrl);
-                releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeUrl, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeUrl));
+                releases.AddRange(ToReleaseInfo(_releaseResolver.GetReleases(_releaseOptions, episodeHtml, episodeUrl, SeriesTitle, AbsoluteEpisodeNumber, _logger), episodeUrl, SeriesTitle, AbsoluteEpisodeNumber));
             }
             catch (Exception ex)
             {
@@ -132,14 +132,21 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return releases;
         }
 
-        private static IEnumerable<ReleaseInfo> ToReleaseInfo(IEnumerable<ResolvedRelease> resolved, string episodeUrl)
+        private static IEnumerable<ReleaseInfo> ToReleaseInfo(IEnumerable<ResolvedRelease> resolved, string episodeUrl, string seriesTitle, int absoluteEpisodeNumber)
         {
             foreach (var release in resolved)
             {
+                // The scraper's own titles ("... - Episode 6 - 720p -
+                // [mirrored.to]") don't parse, so the grab never imports.
+                // Rebuild a clean anime-absolute title Sonarr can match.
+                var quality = QualityTag(release.Title);
+                var title = $"{seriesTitle} - {absoluteEpisodeNumber:000}"
+                    + (quality != null ? $" [{quality}]" : string.Empty);
+
                 yield return new ReleaseInfo
                 {
                     Guid = release.Url,
-                    Title = release.Title,
+                    Title = title,
                     DownloadUrl = release.Url,
                     InfoUrl = episodeUrl,
                     Size = 0,
@@ -147,6 +154,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                     DownloadProtocol = Indexers.DownloadProtocol.Torrent,
                 };
             }
+        }
+
+        private static string QualityTag(string scraperTitle)
+        {
+            return AnimeSiteReleaseResolver.QualityTag(scraperTitle);
         }
 
         // Match a SeriesLinkSelector element by normalized (lowercase,

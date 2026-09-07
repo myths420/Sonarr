@@ -10,6 +10,7 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers;
@@ -213,11 +214,13 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
         private (string DownloadFolder, string FilePath) BuildOutputPaths(string title)
         {
             var safeTitle = string.Join("_", title.Split(Path.GetInvalidFileNameChars()));
-            var root = Settings.DestinationDirectory;
-            if (!string.IsNullOrWhiteSpace(Settings.Category))
-            {
-                root = Path.Combine(root, Settings.Category);
-            }
+
+            // Always nest under a subfolder so downloads never sit loose in
+            // a media root (a common misconfiguration -- see the
+            // DownloadClientRootFolderCheck health warning).
+            var root = Path.Combine(
+                Settings.DestinationDirectory,
+                Settings.Category.IsNotNullOrWhiteSpace() ? Settings.Category : "directhttp");
 
             var downloadFolder = Path.Combine(root, safeTitle);
 
@@ -241,7 +244,11 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                     Message = state.Message,
                     CanMoveFiles = state.Status == DownloadItemStatus.Completed,
                     CanBeRemoved = true,
-                    DownloadClientInfo = DownloadClientItemClientInfo.FromDownloadClient(this, false),
+
+                    // The per-download folder is transient -- once Sonarr has
+                    // imported the file, let it delete the folder so these
+                    // don't pile up next to the library.
+                    DownloadClientInfo = DownloadClientItemClientInfo.FromDownloadClient(this, true),
                 };
             }
         }

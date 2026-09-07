@@ -189,32 +189,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         private static string QualityTag(string scraperTitle)
         {
-            if (string.IsNullOrEmpty(scraperTitle))
-            {
-                return null;
-            }
-
-            if (scraperTitle.Contains("2160") || scraperTitle.Contains("4K", StringComparison.OrdinalIgnoreCase))
-            {
-                return "2160p";
-            }
-
-            if (scraperTitle.Contains("1080"))
-            {
-                return "1080p";
-            }
-
-            if (scraperTitle.Contains("720"))
-            {
-                return "720p";
-            }
-
-            if (scraperTitle.Contains("480"))
-            {
-                return "480p";
-            }
-
-            return null;
+            return AnimeSiteReleaseResolver.QualityTag(scraperTitle);
         }
     }
 }

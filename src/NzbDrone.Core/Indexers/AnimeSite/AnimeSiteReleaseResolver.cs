@@ -117,6 +117,44 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return kept;
         }
 
+        // Extract a Sonarr-parseable quality token from a scraper's own
+        // release title (e.g. "... - 1080p - English - [mediafire.com]" or
+        // "... [Dailymotion] 1080p WEB-DL"). Null when nothing recognised.
+        public static string QualityTag(string scraperTitle)
+        {
+            if (string.IsNullOrEmpty(scraperTitle))
+            {
+                return null;
+            }
+
+            var web = scraperTitle.Contains("WEB", StringComparison.OrdinalIgnoreCase);
+
+            string res = null;
+            if (scraperTitle.Contains("2160") || scraperTitle.Contains("4K", StringComparison.OrdinalIgnoreCase))
+            {
+                res = "2160p";
+            }
+            else if (scraperTitle.Contains("1080"))
+            {
+                res = "1080p";
+            }
+            else if (scraperTitle.Contains("720"))
+            {
+                res = "720p";
+            }
+            else if (scraperTitle.Contains("480"))
+            {
+                res = "480p";
+            }
+
+            if (res == null)
+            {
+                return null;
+            }
+
+            return web ? $"WEBDL-{res}" : res;
+        }
+
         // A release the scraper labelled with a non-English sub language
         // (e.g. "... - 1080p - Indonesian - [mediafire.com]"). This fork is
         // English-only, so those are dropped outright.
@@ -221,7 +259,9 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
                 yield return new ResolvedRelease
                 {
-                    Title = $"{seriesTitle} - Episode {episodeNumber:000} [Dailymotion]",
+                    // "1080p WEB-DL" so both release paths parse a real
+                    // quality (the stream is remuxed up to 1080p).
+                    Title = $"{seriesTitle} - Episode {episodeNumber:000} [Dailymotion] 1080p WEB-DL",
                     Url = url
                 };
             }

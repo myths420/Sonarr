@@ -55,11 +55,52 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             _fetcher = fetcher;
         }
 
+        private static readonly string[] TeraboxHosts =
+        {
+            "terabox", "1024tera", "teraboxapp", "teraboxlink", "terasharelink",
+            "4funbox", "mirrobox", "nephobox", "momerybox", "freeterabox"
+        };
+
         public List<ResolvedRelease> GetReleases(AnimeSiteReleaseOptions options, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
         {
-            return !string.IsNullOrWhiteSpace(options.ScrapingScript)
+            var releases = !string.IsNullOrWhiteSpace(options.ScrapingScript)
                 ? GetReleasesViaScript(options, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger)
                 : GetReleasesViaSelectors(options, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger);
+
+            ResolveTeraboxLinks(releases, options.Fetch, logger);
+            return releases;
+        }
+
+        // TeraBox links are share pages, not direct files -- hand each one
+        // to the page-resolver's click-and-capture flow to turn it into a
+        // real download URL. Left untouched (and likely to fail at download
+        // time) when no page-resolver is configured.
+        private void ResolveTeraboxLinks(List<ResolvedRelease> releases, AnimeSiteFetchOptions fetch, Logger logger)
+        {
+            if (fetch == null || !fetch.UsesResolver)
+            {
+                return;
+            }
+
+            foreach (var release in releases)
+            {
+                if (string.IsNullOrEmpty(release.Url) ||
+                    !TeraboxHosts.Any(h => release.Url.Contains(h, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                var resolved = _fetcher.ResolveTerabox(release.Url, fetch);
+                if (!string.IsNullOrEmpty(resolved?.Link))
+                {
+                    logger.Debug("TeraBox link resolved to a direct URL for {0}", release.Title);
+                    release.Url = resolved.Link;
+                }
+                else
+                {
+                    logger.Warn("TeraBox link could not be resolved for {0}: {1}", release.Title, resolved?.Error);
+                }
+            }
         }
 
         // getReleases(episodeHtml, episodeUrl, seriesTitle, episodeNumber,

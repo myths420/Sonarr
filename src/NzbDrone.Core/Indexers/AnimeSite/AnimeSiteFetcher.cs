@@ -88,6 +88,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         // headless browser) and gets back the download link it produced.
         // Needs PageResolverUrl configured; otherwise returns an error.
         AnimeSiteResolvedLink ResolvePage(string url, string clickText, string resultSelector, AnimeSiteFetchOptions fetch);
+
+        // Hands a TeraBox share URL to the page-resolver's dedicated
+        // click-and-capture flow and gets back a direct download link.
+        AnimeSiteResolvedLink ResolveTerabox(string url, AnimeSiteFetchOptions fetch);
     }
 
     public class AnimeSiteFetcher : IAnimeSiteFetcher
@@ -256,6 +260,45 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             catch (Exception ex)
             {
                 _logger.Warn(ex, "Page resolver ({0}) failed for {1}", fetch.PageResolverUrl, url);
+                return new AnimeSiteResolvedLink { Error = ex.Message };
+            }
+        }
+
+        public AnimeSiteResolvedLink ResolveTerabox(string url, AnimeSiteFetchOptions fetch)
+        {
+            fetch ??= AnimeSiteFetchOptions.Direct;
+
+            if (!fetch.UsesResolver)
+            {
+                return new AnimeSiteResolvedLink { Error = "No Page Resolver URL configured for this indexer." };
+            }
+
+            try
+            {
+                var payload = new Dictionary<string, object>
+                {
+                    ["url"] = url,
+                    ["terabox"] = true,
+                    ["timeoutMs"] = 90000,
+                    ["selfUrl"] = fetch.PageResolverUrl.TrimEnd('/')
+                };
+
+                var request = new HttpRequest(fetch.PageResolverUrl.TrimEnd('/') + "/terabox") { Method = HttpMethod.Post };
+                request.Headers.ContentType = "application/json";
+                request.Headers.Accept = "application/json";
+                request.SetContent(JsonSerializer.Serialize(payload));
+                request.RequestTimeout = TimeSpan.FromSeconds(120);
+                request.SuppressHttpError = true;
+
+                var response = _httpClient.Execute(request);
+                var result = JsonSerializer.Deserialize<AnimeSiteResolvedLink>(response.Content,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                return result ?? new AnimeSiteResolvedLink { Error = "Page resolver returned an empty response." };
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "TeraBox resolver ({0}) failed for {1}", fetch.PageResolverUrl, url);
                 return new AnimeSiteResolvedLink { Error = ex.Message };
             }
         }

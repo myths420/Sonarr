@@ -58,6 +58,27 @@ environment:
 when a solver is active. Without a key, a Turnstile page fails fast with
 `502 {"error":"Cloudflare Turnstile is gating this link ..."}`.
 
+## TeraBox
+
+`POST /terabox { "url": "https://terabox.com/s/1<code>", "selfUrl": "http://page-resolver:3000" }`
+(Sonarr calls this automatically for any `terabox` / `1024tera` / `4funbox`
+/ `mirrobox` / … link a Scraping Script returns.)
+
+TeraBox gates the **original file** behind a login. Without an account
+the resolver falls back to the guest **HLS stream** (~480p), handing back
+a `…/terabox/fetch?src=…` URL that this service remuxes to a single MP4 on
+the fly (needs `ffmpeg`, which the image now bundles).
+
+For the original quality, set the cookie from a free logged-in account:
+
+```yaml
+environment:
+  # full cookie string, or at minimum the ndus pair
+  - TERABOX_COOKIE=ndus=Y4abc...
+```
+
+Response: `200 {"link":"...","filename":"...","quality":"original" | "stream-480p","note":"..."}`
+
 ## Wire it into Sonarr
 
 Set **Settings → Indexers → (your AnimeSite indexer) → Page Resolver URL**

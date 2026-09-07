@@ -18,11 +18,13 @@
 //   -> 502 { "error": "...", "elapsedMs": N }
 
 const http = require('http');
+const { spawn } = require('child_process');
 // patchright = Playwright with the CDP runtime leaks patched out
 // (Runtime.enable, console API, closed shadow roots) that Cloudflare's
 // bot check fingerprints. Drop-in for playwright's chromium.
 const { chromium } = require('patchright');
 const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER, CAPTCHA_ENDPOINT } = require('./captcha');
+const { resolveTerabox, isTeraboxUrl } = require('./terabox');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const NAV_TIMEOUT = parseInt(process.env.NAV_TIMEOUT_MS || '45000', 10);
@@ -127,6 +129,13 @@ async function resolve(opts) {
   if (!url || !/^https?:\/\//i.test(url)) {
     throw new Error('a valid absolute url is required');
   }
+
+  // TeraBox needs its own click-and-capture flow, not the generic
+  // "wait for an off-site <a href>" one.
+  if (opts.terabox === true || isTeraboxUrl(url)) {
+    return resolveTerabox(url, opts);
+  }
+
   const pageHost = new URL(url).host;
 
   const browser = await getBrowser();
@@ -209,6 +218,44 @@ async function resolve(opts) {
   }
 }
 
+// GET /terabox/fetch?src=<encoded terabox .m3u8 URL>
+// Remuxes the HLS stream to a single MP4 and pipes it to the response so
+// a plain HTTP downloader can save it. Only terabox-family hosts allowed.
+function teraboxFetch(req, res, src) {
+  let host;
+  try {
+    host = new URL(src).host;
+  } catch (e) {
+    res.writeHead(400);
+    return res.end('bad src');
+  }
+  if (!/(terabox|1024tera|freeterabox|teraboxcdn|nephobox)/i.test(host)) {
+    res.writeHead(400);
+    return res.end('src host not allowed');
+  }
+
+  const ff = spawn('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error',
+    '-user_agent', 'Mozilla/5.0',
+    '-i', src,
+    '-c', 'copy',
+    '-f', 'mp4',
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    'pipe:1',
+  ]);
+
+  res.writeHead(200, {
+    'content-type': 'video/mp4',
+    'content-disposition': 'attachment; filename="terabox.mp4"',
+  });
+  ff.stdout.pipe(res);
+  ff.stderr.on('data', (d) => process.stderr.write(d));
+  ff.on('error', () => { try { res.destroy(); } catch (e) { /* */ } });
+  const kill = () => { try { ff.kill('SIGKILL'); } catch (e) { /* */ } };
+  req.on('close', kill);
+  res.on('close', kill);
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -218,10 +265,24 @@ const server = http.createServer((req, res) => {
       captchaEndpoint: captchaEnabled() ? CAPTCHA_ENDPOINT : undefined,
     }));
   }
-  if (req.method !== 'POST' || req.url !== '/resolve') {
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && req.url.startsWith('/terabox/fetch?')) {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, { 'content-type': 'video/mp4' });
+      return res.end();
+    }
+    const src = new URL(req.url, 'http://x').searchParams.get('src');
+    if (!src) {
+      res.writeHead(400);
+      return res.end('src required');
+    }
+    return teraboxFetch(req, res, src);
+  }
+  if (req.method !== 'POST' || (req.url !== '/resolve' && req.url !== '/terabox')) {
     res.writeHead(404);
     return res.end('not found');
   }
+  const teraboxEndpoint = req.url === '/terabox';
 
   let body = '';
   req.on('data', (c) => {
@@ -239,7 +300,9 @@ const server = http.createServer((req, res) => {
 
     const started = Date.now();
     try {
-      const result = await resolve(opts);
+      const result = teraboxEndpoint
+        ? await resolveTerabox(opts.url, opts)
+        : await resolve(opts);
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ...result, elapsedMs: Date.now() - started }));
     } catch (err) {

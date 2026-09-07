@@ -27,6 +27,11 @@ services:
       # Optional -- only needed for Turnstile-gated hosts (vik1ngfile).
       # - CAPTCHA_PROVIDER=capsolver        # or 2captcha
       # - CAPTCHA_API_KEY=your-key-here
+      # Optional -- raises the TeraBox success rate. Value is the cookie
+      # string from a logged-in terabox.com (at minimum the `ndus=...`
+      # pair). Without it, guest downloads work only for shares TeraBox
+      # doesn't gate behind a login.
+      # - TERABOX_COOKIE=ndus=Y4...
     # Host port optional -- Sonarr reaches it on proxynet as
     # http://page-resolver:3000. Add `ports: ["3003:3000"]` to curl it.
     networks:

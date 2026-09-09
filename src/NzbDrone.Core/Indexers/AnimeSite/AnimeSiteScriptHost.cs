@@ -53,6 +53,25 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
         }
 
+        // host.getDirect(url) -> page text via a plain HTTP request, never
+        // the headless browser. Use it for content that needs no Cloudflare
+        // clearance or JS (sitemaps, XML, JSON) -- routing those through
+        // Byparr/FlareSolverr is slow and it chokes on non-HTML documents,
+        // which stalls the script until the engine timeout.
+        public string GetDirect(string url)
+        {
+            try
+            {
+                var page = _fetcher.GetPage(url, null, AnimeSiteFetchOptions.Direct);
+                return page.Html ?? "";
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Scraping script host.getDirect() failed for {0}", url);
+                return "";
+            }
+        }
+
         // host.getPage(url[, referer]) -> JSON {html, finalUrl}. finalUrl is
         // where the fetch actually landed (the headless browser reports the
         // post-redirect URL) -- use it to follow a shortener or a

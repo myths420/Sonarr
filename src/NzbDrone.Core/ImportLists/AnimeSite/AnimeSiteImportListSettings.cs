@@ -72,7 +72,10 @@ namespace NzbDrone.Core.ImportLists.AnimeSite
         // name from its URL slug. Falls back to the <a href> links when a
         // headless browser returns the sitemap rendered as HTML.
         public const string DefaultScrapingScript = @"function listShows(baseUrl, maxPages) {
-  var xml = host.get(baseUrl + '/anime-sitemap.xml');
+  // Plain request: a sitemap needs no Cloudflare clearance or JS, and the
+  // headless browser is slow / errors on XML documents.
+  var xml = host.getDirect(baseUrl + '/anime-sitemap.xml');
+  if (!xml) { xml = host.get(baseUrl + '/anime-sitemap.xml'); }
   var out = [];
   if (!xml) { host.log('anime-sitemap.xml returned nothing'); return JSON.stringify(out); }
   var skip = { '': 1, 'anime': 1, 'anime-sitemap': 1, 'category': 1, 'genre': 1, 'genres': 1, 'season': 1, 'page': 1, 'tag': 1, 'network': 1, 'type': 1, 'studio': 1, 'schedule': 1, 'ongoing': 1, 'completed': 1 };

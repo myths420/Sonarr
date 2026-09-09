@@ -148,6 +148,13 @@ namespace NzbDrone.Core.AnimeSite
                     : SynthesiseEpisodes(show.Episodes, i + 1));
             }
 
+            // These are top-up episodes only -- a slot for files to import
+            // into. Leaving them monitored would kick off a mass auto-search.
+            foreach (var episode in episodes)
+            {
+                episode.Monitored = false;
+            }
+
             return episodes;
         }
 
@@ -162,7 +169,11 @@ namespace NzbDrone.Core.AnimeSite
                     EpisodeNumber = n,
                     AbsoluteEpisodeNumber = n,
                     Title = $"Episode {n}",
-                    Monitored = true
+
+                    // Unmonitored: these only exist so files for later episodes
+                    // have a slot to import into. Monitoring the whole synthesised
+                    // range would kick off a mass auto-search/grab.
+                    Monitored = false
                 });
             }
 

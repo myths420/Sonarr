@@ -27,6 +27,10 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
     // mid-import doesn't lose a completed download.
     public class DirectHttpDownloadClient : DownloadClientBase<DirectHttpDownloadClientSettings>
     {
+        // Anything smaller than this isn't a real episode -- it's an error
+        // page, an empty 200, or a cut-off transfer.
+        private const long MinimumVideoBytes = 1_000_000;
+
         private static readonly ConcurrentDictionary<string, DirectDownloadState> _items = new();
         private static readonly object _persistLock = new();
 
@@ -188,6 +192,25 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                     {
                         throw new HttpException(request, response, "Site responded with html content.");
                     }
+                }
+
+                // A dead / expired host link often 200s with an empty or tiny
+                // body, or the transfer is cut short. Don't hand a truncated
+                // file to import -- ffprobe rejects it ("moov atom not found")
+                // and it sits in the queue forever. Fail so Sonarr blocklists
+                // the release and grabs the next one.
+                var downloadedSize = new FileInfo(partPath).Length;
+
+                if (downloadedSize < MinimumVideoBytes)
+                {
+                    Fail(state, $"Downloaded file is only {downloadedSize} bytes -- the link is dead or returned an error page.");
+                    return;
+                }
+
+                if (state.TotalSize > 0 && downloadedSize < state.TotalSize * 0.95)
+                {
+                    Fail(state, $"Download was truncated: got {downloadedSize} of {state.TotalSize} bytes.");
+                    return;
                 }
 
                 if (_diskProvider.FileExists(state.FilePath))

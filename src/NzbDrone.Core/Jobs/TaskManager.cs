@@ -138,6 +138,12 @@ namespace NzbDrone.Core.Jobs
                     {
                         Interval = 6 * 60,
                         TypeName = typeof(SiteSeriesSyncCommand).FullName
+                    },
+
+                    new ScheduledTask
+                    {
+                        Interval = 6 * 60,
+                        TypeName = typeof(SiteShowSyncCommand).FullName
                     }
                 };
 

@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
@@ -38,10 +36,6 @@ namespace NzbDrone.Core.AnimeSite
 
     public class SiteScrapeSeriesInfoProxy : ISiteScrapeSeriesInfoProxy
     {
-        private static readonly Regex DateInTitle = new Regex(
-            @"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
         private readonly ISiteShowRepository _siteShowRepository;
         private readonly IIndexerFactory _indexerFactory;
         private readonly IAnimeSiteCatalogBrowser _catalogBrowser;
@@ -143,19 +137,44 @@ namespace NzbDrone.Core.AnimeSite
                     continue;
                 }
 
-                episodes.AddRange(allowScrape
-                    ? MapEpisodes(show, i + 1)
-                    : SynthesiseEpisodes(show.Episodes, i + 1));
-            }
+                var seasonNumber = i + 1;
+                var cached = show.GetCachedEpisodes();
 
-            // These are top-up episodes only -- a slot for files to import
-            // into. Leaving them monitored would kick off a mass auto-search.
-            foreach (var episode in episodes)
-            {
-                episode.Monitored = false;
+                if (cached.Count > 0)
+                {
+                    episodes.AddRange(EpisodesFromCache(cached, seasonNumber));
+                }
+                else if (allowScrape)
+                {
+                    episodes.AddRange(MapEpisodes(show, seasonNumber));
+                }
+                else
+                {
+                    episodes.AddRange(SynthesiseEpisodes(show.Episodes, seasonNumber));
+                }
             }
 
             return episodes;
+        }
+
+        private static List<Episode> EpisodesFromCache(List<SiteShowEpisode> cached, int seasonNumber)
+        {
+            return cached
+                .Where(e => e.Number > 0)
+                .GroupBy(e => e.Number)
+                .Select(g => g.First())
+                .OrderBy(e => e.Number)
+                .Select(e => new Episode
+                {
+                    SeasonNumber = seasonNumber,
+                    EpisodeNumber = e.Number,
+                    AbsoluteEpisodeNumber = e.Number,
+                    Title = string.IsNullOrWhiteSpace(e.Title) ? $"Episode {e.Number}" : e.Title,
+                    AirDate = e.AirDateUtc?.ToString(Episode.AIR_DATE_FORMAT),
+                    AirDateUtc = e.AirDateUtc,
+                    Monitored = true
+                })
+                .ToList();
         }
 
         private static List<Episode> SynthesiseEpisodes(int count, int seasonNumber)
@@ -169,11 +188,7 @@ namespace NzbDrone.Core.AnimeSite
                     EpisodeNumber = n,
                     AbsoluteEpisodeNumber = n,
                     Title = $"Episode {n}",
-
-                    // Unmonitored: these only exist so files for later episodes
-                    // have a slot to import into. Monitoring the whole synthesised
-                    // range would kick off a mass auto-search/grab.
-                    Monitored = false
+                    Monitored = true
                 });
             }
 
@@ -206,7 +221,7 @@ namespace NzbDrone.Core.AnimeSite
                 .OrderBy(e => e.Number)
                 .Select(e =>
                 {
-                    var airDate = ParseAirDate(e.Title);
+                    var airDate = SiteEpisodeTitle.ParseAirDate(e.Title);
 
                     return new Episode
                     {
@@ -220,23 +235,6 @@ namespace NzbDrone.Core.AnimeSite
                     };
                 })
                 .ToList();
-        }
-
-        private static DateTime? ParseAirDate(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return null;
-            }
-
-            var match = DateInTitle.Match(title);
-            if (match.Success &&
-                DateTime.TryParse(match.Value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var date))
-            {
-                return date;
-            }
-
-            return null;
         }
 
         public string LocalPosterUrl(int aniListId)

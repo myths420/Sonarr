@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.AnimeSite
@@ -20,5 +22,45 @@ namespace NzbDrone.Core.AnimeSite
         public string Genres { get; set; }
         public int AniListId { get; set; }
         public DateTime LastSyncTime { get; set; }
+
+        // Cached scraped episode list (see SiteShowEpisode) and when it was
+        // last refreshed. Kept current by the Sites sync so an AniList-backed
+        // series can be topped up with real air dates without a live scrape.
+        public string EpisodesJson { get; set; }
+        public DateTime LastEpisodeSync { get; set; }
+
+        public List<SiteShowEpisode> GetCachedEpisodes()
+        {
+            if (string.IsNullOrWhiteSpace(EpisodesJson))
+            {
+                return new List<SiteShowEpisode>();
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<List<SiteShowEpisode>>(EpisodesJson) ?? new List<SiteShowEpisode>();
+            }
+            catch (JsonException)
+            {
+                return new List<SiteShowEpisode>();
+            }
+        }
+
+        public void SetCachedEpisodes(List<SiteShowEpisode> episodes)
+        {
+            EpisodesJson = episodes == null || episodes.Count == 0
+                ? null
+                : JsonSerializer.Serialize(episodes);
+            LastEpisodeSync = DateTime.UtcNow;
+        }
+    }
+
+    // One scraped episode of a catalogue show. AirDateUtc is parsed from the
+    // episode title ("... December 12, 2025") when present.
+    public class SiteShowEpisode
+    {
+        public int Number { get; set; }
+        public string Title { get; set; }
+        public DateTime? AirDateUtc { get; set; }
     }
 }

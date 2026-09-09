@@ -67,6 +67,9 @@ namespace NzbDrone.Core.AnimeSite
     public class SiteShowService : ISiteShowService, IExecute<SiteShowSyncCommand>, IExecute<SiteAddAllCommand>, IHandleAsync<ProviderDeletedEvent<IIndexer>>
     {
         private const int DefaultBackfillLimit = 25;
+        private const int EpisodeCacheBatch = 40;
+
+        private static readonly TimeSpan EpisodeCacheTtl = TimeSpan.FromHours(18);
 
         private readonly ISiteShowRepository _repository;
         private readonly IIndexerFactory _indexerFactory;
@@ -588,10 +591,31 @@ namespace NzbDrone.Core.AnimeSite
 
         public void Execute(SiteShowSyncCommand message)
         {
-            SyncCatalogue(message.SourceListId);
+            var indexerIds = message.SourceListId > 0
+                ? new List<int> { message.SourceListId }
+                : _indexerFactory.All().Where(d => d.Implementation == "AnimeSiteIndexer").Select(d => d.Id).ToList();
+
+            // Scheduled run: just keep the episode caches fresh (cheap, one
+            // page per stale show). The full catalogue re-sync + metadata
+            // backfill stay on the Sites page Refresh button.
+            if (message.Trigger == CommandTrigger.Scheduled)
+            {
+                foreach (var id in indexerIds)
+                {
+                    RefreshEpisodeCache(id, force: false);
+                }
+
+                return;
+            }
 
             var manual = message.Trigger == CommandTrigger.Manual;
-            BackfillMetadata(message.SourceListId, manual ? 75 : DefaultBackfillLimit, manual);
+
+            foreach (var id in indexerIds)
+            {
+                SyncCatalogue(id);
+                BackfillMetadata(id, manual ? 75 : DefaultBackfillLimit, manual);
+                RefreshEpisodeCache(id, force: manual);
+            }
 
             // Shows added while AniList was unreachable are scrape-backed
             // and don't fold. Retry the AniList lookup and migrate any
@@ -602,6 +626,76 @@ namespace NzbDrone.Core.AnimeSite
             // (regardless of which catalogue triggered this) so counters
             // reflect what's on disk and loose files get imported.
             RescanSyntheticSeries();
+        }
+
+        // Refresh the cached scraped episode list (number + title + parsed
+        // air date) for shows whose cache is missing or older than the TTL.
+        // A scheduled run only does a batch so it cycles through the
+        // catalogue over a day or two; a manual Refresh does the lot.
+        private void RefreshEpisodeCache(int sourceListId, bool force)
+        {
+            var options = GetCatalogueOptions(sourceListId);
+            if (options == null)
+            {
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+
+            var stale = _repository.FindBySourceList(sourceListId)
+                .Where(s => force || s.LastEpisodeSync == default || now - s.LastEpisodeSync > EpisodeCacheTtl)
+                .OrderBy(s => s.LastEpisodeSync)
+                .Take(force ? int.MaxValue : EpisodeCacheBatch)
+                .ToList();
+
+            if (stale.Count == 0)
+            {
+                return;
+            }
+
+            var updated = new List<SiteShow>();
+
+            foreach (var show in stale)
+            {
+                try
+                {
+                    var episodes = _catalogBrowser.BrowseEpisodes(options, show.Url, _logger)
+                        .Where(e => e.Number > 0)
+                        .GroupBy(e => e.Number)
+                        .Select(g => g.First())
+                        .OrderBy(e => e.Number)
+                        .Select(e => new SiteShowEpisode
+                        {
+                            Number = e.Number,
+                            Title = e.Title,
+                            AirDateUtc = SiteEpisodeTitle.ParseAirDate(e.Title)
+                        })
+                        .ToList();
+
+                    if (episodes.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    show.SetCachedEpisodes(episodes);
+                    if (episodes.Count > show.Episodes)
+                    {
+                        show.Episodes = episodes.Count;
+                    }
+
+                    updated.Add(show);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Sites sync: couldn't refresh the episode cache for '{0}'", show.Title);
+                }
+            }
+
+            if (updated.Count > 0)
+            {
+                _repository.UpdateMany(updated);
+                _logger.Info("Sites sync: refreshed the episode cache for {0} show(s) on indexer {1}", updated.Count, sourceListId);
+            }
         }
 
         private void UpgradeScrapeBackedSeries()

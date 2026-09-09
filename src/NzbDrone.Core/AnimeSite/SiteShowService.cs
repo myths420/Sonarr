@@ -434,9 +434,11 @@ namespace NzbDrone.Core.AnimeSite
             if (seasonInfo.HasSeason)
             {
                 var baseClean = seasonInfo.BaseTitle.CleanSeriesTitle();
+                var baseKey = SiteTitleMatch.Key(seasonInfo.BaseTitle);
                 var baseSeries = _seriesService.GetAllSeries().FirstOrDefault(s =>
                     s.CleanTitle == baseClean ||
-                    SeasonTitleParser.Parse(s.Title).BaseTitle.CleanSeriesTitle() == baseClean);
+                    SeasonTitleParser.Parse(s.Title).BaseTitle.CleanSeriesTitle() == baseClean ||
+                    (baseKey.Length > 0 && SiteTitleMatch.Key(s.Title) == baseKey));
 
                 if (baseSeries == null)
                 {
@@ -534,11 +536,26 @@ namespace NzbDrone.Core.AnimeSite
             }
 
             // Cleaned-title match, so a hand-added / TheTVDB series for the
-            // same show is reused rather than duplicated.
+            // same show -- or the same show added from another site under a
+            // slightly different name (trailing year, "New", sub tags) -- is
+            // reused rather than duplicated. Higher seasons are left to the
+            // caller's fold step, which records the season's AniList id.
             var slug = Parser.Parser.CleanSeriesTitle(show.Title ?? string.Empty);
-            return string.IsNullOrEmpty(slug)
-                ? null
-                : all.FirstOrDefault(s => s.CleanTitle == slug);
+            var byClean = string.IsNullOrEmpty(slug) ? null : all.FirstOrDefault(s => s.CleanTitle == slug);
+            if (byClean != null)
+            {
+                return byClean;
+            }
+
+            if (SeasonTitleParser.Parse(show.Title).HasSeason)
+            {
+                return null;
+            }
+
+            var key = SiteTitleMatch.Key(show.Title);
+            return key.Length > 2
+                ? all.FirstOrDefault(s => SiteTitleMatch.Key(s.Title) == key)
+                : null;
         }
 
         private string ResolveRootFolder(string rootFolderPath)

@@ -81,14 +81,22 @@ public class SiteShowController : Controller
             }
 
             // Also index the season-suffix-stripped title so a "Season 2"
-            // catalogue row links to the series it was folded into.
+            // catalogue row links to the series it was folded into, and the
+            // cross-site key (year / "New" / sub tags stripped too).
             var baseClean = SeasonTitleParser.Parse(series.Title).BaseTitle.CleanSeriesTitle();
             if (!string.IsNullOrEmpty(baseClean))
             {
                 seriesByCleanTitle.TryAdd(baseClean, series);
             }
 
-            foreach (var aniListId in series.AniListIds)
+            var matchKey = SiteTitleMatch.Key(series.Title);
+            if (!string.IsNullOrEmpty(matchKey))
+            {
+                seriesByCleanTitle.TryAdd(matchKey, series);
+            }
+
+            // AniList ids: the one in the synthetic tvdb id, plus folded ones.
+            foreach (var aniListId in SiteTitleMatch.AniListIds(series))
             {
                 seriesByAniListId.TryAdd(aniListId, series);
             }
@@ -120,6 +128,15 @@ public class SiteShowController : Controller
                 if (!string.IsNullOrEmpty(clean))
                 {
                     seriesByCleanTitle.TryGetValue(clean, out series);
+                }
+            }
+
+            if (series == null)
+            {
+                var matchKey = SiteTitleMatch.Key(resource.Title);
+                if (!string.IsNullOrEmpty(matchKey))
+                {
+                    seriesByCleanTitle.TryGetValue(matchKey, out series);
                 }
             }
 

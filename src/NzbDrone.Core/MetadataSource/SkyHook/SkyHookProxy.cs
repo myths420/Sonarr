@@ -157,6 +157,8 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         // import into. Only adds; never removes an AniList episode.
         private void MergeScrapedEpisodes(IReadOnlyList<int> aniListIds, List<Episode> episodes, bool allowScrape)
         {
+            var firstId = aniListIds is { Count: > 0 } ? aniListIds[0] : 0;
+
             try
             {
                 var scraped = _siteScrapeSeriesInfoProxy.ScrapedEpisodesForAniList(aniListIds, allowScrape);
@@ -181,12 +183,12 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                     episodes.Sort((a, b) => a.SeasonNumber != b.SeasonNumber
                         ? a.SeasonNumber.CompareTo(b.SeasonNumber)
                         : a.EpisodeNumber.CompareTo(b.EpisodeNumber));
-                    _logger.Debug("Added {0} scraped episode(s) to AniList series {1}", added, aniListIds.FirstOrDefault());
+                    _logger.Debug("Added {0} scraped episode(s) to AniList series {1}", added, firstId);
                 }
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Couldn't merge scraped episodes for AniList {0}", aniListIds?.FirstOrDefault());
+                _logger.Debug(ex, "Couldn't merge scraped episodes for AniList {0}", firstId);
             }
         }
 

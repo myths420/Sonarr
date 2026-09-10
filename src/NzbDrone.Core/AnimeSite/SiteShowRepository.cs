@@ -10,6 +10,7 @@ namespace NzbDrone.Core.AnimeSite
         List<SiteShow> FindBySourceList(int sourceListId);
         SiteShow FindBySlug(int sourceListId, string slug);
         SiteShow FindByAniListId(int aniListId);
+        List<SiteShow> FindByMappedSeriesId(int seriesId);
     }
 
     public class SiteShowRepository : BasicRepository<SiteShow>, ISiteShowRepository
@@ -32,6 +33,11 @@ namespace NzbDrone.Core.AnimeSite
         public SiteShow FindByAniListId(int aniListId)
         {
             return Query(s => s.AniListId == aniListId).FirstOrDefault();
+        }
+
+        public List<SiteShow> FindByMappedSeriesId(int seriesId)
+        {
+            return seriesId <= 0 ? new List<SiteShow>() : Query(s => s.MappedSeriesId == seriesId);
         }
     }
 }

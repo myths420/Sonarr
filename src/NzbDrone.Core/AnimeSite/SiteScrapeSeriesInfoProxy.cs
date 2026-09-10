@@ -32,6 +32,11 @@ namespace NzbDrone.Core.AnimeSite
         // the persisted catalogue count with no network call; allowScrape=true
         // (AniList unreachable) does a live episode-list scrape.
         List<Episode> ScrapedEpisodesForAniList(IReadOnlyList<int> aniListIds, bool allowScrape);
+
+        // Episodes contributed by catalogue rows a user has manually linked
+        // to this series, each placed at its mapped season. Empty when none
+        // are linked.
+        List<Episode> MappedRowEpisodes(int seriesId);
     }
 
     public class SiteScrapeSeriesInfoProxy : ISiteScrapeSeriesInfoProxy
@@ -152,6 +157,18 @@ namespace NzbDrone.Core.AnimeSite
                 {
                     episodes.AddRange(SynthesiseEpisodes(show.Episodes, seasonNumber));
                 }
+            }
+
+            return episodes;
+        }
+
+        public List<Episode> MappedRowEpisodes(int seriesId)
+        {
+            var episodes = new List<Episode>();
+            foreach (var show in _siteShowRepository.FindByMappedSeriesId(seriesId))
+            {
+                var season = show.MappedSeason > 0 ? show.MappedSeason : 1;
+                episodes.AddRange(EpisodesFromCache(show.GetCachedEpisodes(), season));
             }
 
             return episodes;

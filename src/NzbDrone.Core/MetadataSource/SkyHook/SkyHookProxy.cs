@@ -81,6 +81,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
 
                 EnsureSitePoster(tuple.Item1, ids[0]);
                 MergeScrapedEpisodes(ids, tuple.Item2, aniListUnreachable);
+                AppendMappedRowEpisodes(tuple.Item1, tuple.Item2, existing?.Id);
 
                 if (tuple.Item2.Count == 0 && existing != null)
                 {
@@ -96,7 +97,9 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             // Catalogue show with no AniList match (see SiteSeriesIds).
             if (SiteSeriesIds.IsSiteId(tvdbSeriesId))
             {
-                return _siteScrapeSeriesInfoProxy.GetSeriesInfo(SiteSeriesIds.ToSiteShowId(tvdbSeriesId));
+                var tuple = _siteScrapeSeriesInfoProxy.GetSeriesInfo(SiteSeriesIds.ToSiteShowId(tvdbSeriesId));
+                AppendMappedRowEpisodes(tuple.Item1, tuple.Item2, _seriesService.FindByTvdbId(tvdbSeriesId)?.Id);
+                return tuple;
             }
 
             var httpRequest = _requestBuilder.Create()
@@ -189,6 +192,56 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             catch (Exception ex)
             {
                 _logger.Debug(ex, "Couldn't merge scraped episodes for AniList {0}", firstId);
+            }
+        }
+
+        // A catalogue row manually linked to this series contributes its
+        // episodes at the mapped season, so files moved there on link have
+        // an episode to import into.
+        private void AppendMappedRowEpisodes(Series series, List<Episode> episodes, int? seriesId)
+        {
+            if (seriesId is not > 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var mapped = _siteScrapeSeriesInfoProxy.MappedRowEpisodes(seriesId.Value);
+                if (mapped.Count == 0)
+                {
+                    return;
+                }
+
+                var have = new HashSet<(int Season, int Episode)>(episodes.Select(e => (e.SeasonNumber, e.EpisodeNumber)));
+                var added = 0;
+                foreach (var episode in mapped)
+                {
+                    if (!have.Add((episode.SeasonNumber, episode.EpisodeNumber)))
+                    {
+                        continue;
+                    }
+
+                    episodes.Add(episode);
+                    added++;
+
+                    if (series.Seasons.All(s => s.SeasonNumber != episode.SeasonNumber))
+                    {
+                        series.Seasons.Add(new Season { SeasonNumber = episode.SeasonNumber, Monitored = true });
+                    }
+                }
+
+                if (added > 0)
+                {
+                    episodes.Sort((a, b) => a.SeasonNumber != b.SeasonNumber
+                        ? a.SeasonNumber.CompareTo(b.SeasonNumber)
+                        : a.EpisodeNumber.CompareTo(b.EpisodeNumber));
+                    _logger.Debug("Added {0} episode(s) from manually linked catalogue rows to series {1}", added, seriesId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Couldn't append manually linked catalogue episodes for series {0}", seriesId);
             }
         }
 

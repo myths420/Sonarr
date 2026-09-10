@@ -418,14 +418,121 @@ namespace NzbDrone.Core.AnimeSite
             var series = _seriesService.GetAllSeries().FirstOrDefault(s => s.Id == seriesId)
                          ?? throw new SiteSeriesAddException($"Series {seriesId} not found.");
 
+            // The series this row resolved to before the manual link -- its
+            // own scrape-backed / AniList-backed series, if it has one.
+            var previous = _seriesService.GetAllSeries().FirstOrDefault(s =>
+                s.TvdbId == SiteSeriesIds.FromSiteShowId(show.Id) ||
+                (show.AniListId > 0 && (s.TvdbId == AniListSeriesIds.FromAniListId(show.AniListId) || s.AniListIds.Contains(show.AniListId))));
+
             show.MappedSeriesId = series.Id;
             show.MappedSeason = season is > 0 ? season.Value : SeasonTitleParser.Parse(show.Title).Season;
             _repository.Update(show);
 
             _logger.Info("Linked site show '{0}' to series {1} '{2}' as season {3}", show.Title, series.Id, series.Title, show.MappedSeason);
+
+            if (previous != null && previous.Id != series.Id)
+            {
+                MoveFilesToLinkedSeries(previous, series, show.MappedSeason);
+            }
+
+            // Refresh so the linked series picks up the mapped season's
+            // episodes (SkyHookProxy.AppendMappedRowEpisodes), then rescan so
+            // the moved files import against them.
+            _commandQueueManager.Push(new RefreshSeriesCommand(new List<int> { series.Id }));
             _commandQueueManager.Push(new RescanSeriesCommand(series.Id));
 
             return show;
+        }
+
+        // On a manual link, move the episode files from the row's old
+        // stand-alone series into the linked series' season folder (renamed
+        // S{season}E{ep}), then rescan both so the linked series imports
+        // them and the old one drops the now-missing files.
+        private void MoveFilesToLinkedSeries(Series from, Series to, int toSeason)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(from.Path) || string.IsNullOrWhiteSpace(to.Path) || !_diskProvider.FolderExists(to.Path))
+                {
+                    return;
+                }
+
+                var files = _mediaFileService.GetFilesBySeries(from.Id);
+                if (files.Count == 0)
+                {
+                    return;
+                }
+
+                var seasonFolder = to.SeasonFolder ? Path.Combine(to.Path, $"Season {toSeason:00}") : to.Path;
+                _diskProvider.EnsureFolder(seasonFolder);
+
+                var moved = 0;
+                foreach (var file in files)
+                {
+                    var src = file.Path;
+                    if (string.IsNullOrEmpty(src) || !_diskProvider.FileExists(src))
+                    {
+                        continue;
+                    }
+
+                    var name = Path.GetFileNameWithoutExtension(src);
+                    int episodeNumber;
+
+                    var se = Regex.Match(name, @"[Ss](\d{1,3})[Ee](\d{1,3})");
+                    if (se.Success)
+                    {
+                        episodeNumber = int.Parse(se.Groups[2].Value);
+                    }
+                    else
+                    {
+                        var epOnly = Regex.Match(name, @"Episode\s+(\d{1,4})");
+                        if (!epOnly.Success)
+                        {
+                            continue;
+                        }
+
+                        episodeNumber = int.Parse(epOnly.Groups[1].Value);
+                    }
+
+                    var quality = file.Quality?.Quality?.Name;
+                    if (string.IsNullOrWhiteSpace(quality) || quality == "Unknown")
+                    {
+                        quality = "HDTV-1080p";
+                    }
+
+                    var destName = FileNameSafe($"{to.Title} - S{toSeason:00}E{episodeNumber:00} - Episode {episodeNumber} [{quality}]") + Path.GetExtension(src);
+                    var dest = Path.Combine(seasonFolder, destName);
+
+                    if (string.Equals(Path.GetFullPath(src), Path.GetFullPath(dest), StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (_diskProvider.FileExists(dest))
+                    {
+                        _diskProvider.DeleteFile(dest);
+                    }
+
+                    _diskProvider.MoveFile(src, dest);
+                    moved++;
+                }
+
+                _logger.Info("Manual link: moved {0} file(s) from '{1}' into '{2}' Season {3}", moved, from.Title, to.Title, toSeason);
+
+                if (moved > 0)
+                {
+                    _commandQueueManager.Push(new RescanSeriesCommand(from.Id));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Manual link: couldn't move files from '{0}' to '{1}'", from.Title, to.Title);
+            }
+        }
+
+        private static string FileNameSafe(string value)
+        {
+            return string.Join("_", (value ?? string.Empty).Split(Path.GetInvalidFileNameChars())).Trim();
         }
 
         public Series AddAsSeries(int showId, string rootFolderPath, int? qualityProfileId, bool searchForMissingEpisodes)

@@ -305,4 +305,20 @@ public class SiteShowController : Controller
         LinkLibrarySeries(new List<SiteShowResource> { resource });
         return resource;
     }
+
+    // Re-mux this show's stream-downloaded files in place (or, if a file
+    // can't be re-muxed, delete + re-download it). all=true does every file,
+    // not just the WEB-DL / stream ones.
+    [HttpPost("{id:int}/repair")]
+    [Produces("application/json")]
+    public ActionResult<SiteRepairResource> RepairSiteShow(int id, [FromBody] SiteRepairRequest? request)
+    {
+        if (_siteShowService.Get(id) == null)
+        {
+            return NotFound();
+        }
+
+        var result = _siteShowService.RepairShow(id, webOnly: !(request?.All ?? false));
+        return new SiteRepairResource { Repaired = result.Repaired, Redownloaded = result.Redownloaded };
+    }
 }

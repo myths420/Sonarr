@@ -59,6 +59,21 @@ namespace NzbDrone.Core.AnimeSite
         // seasons) by hand. seriesId <= 0 clears the link. season null falls
         // back to the season parsed from the row title.
         SiteShow SetManualLink(int showId, int seriesId, int? season);
+
+        // Deletes this show's stream-sourced episode files (WEB-DL, from the
+        // Dailymotion / Rumble path) and re-downloads them with the current
+        // resolver. webOnly=false wipes every file for the show. Used to
+        // replace files from the pre-fix remux that play badly.
+        SiteRepairResult RepairShow(int showId, bool webOnly);
+    }
+
+    public class SiteRepairResult
+    {
+        // Files fixed by an in-place re-mux (no re-download needed).
+        public int Repaired { get; set; }
+
+        // Files that couldn't be re-muxed -- deleted and re-downloaded.
+        public int Redownloaded { get; set; }
     }
 
     public class SiteSeriesAddException : Exception
@@ -93,6 +108,8 @@ namespace NzbDrone.Core.AnimeSite
         private readonly Lazy<ISiteDownloadService> _siteDownloadService;
         private readonly IEpisodeService _episodeService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly IDeleteMediaFiles _mediaFileDeletionService;
+        private readonly ISiteFileRepairService _fileRepairService;
         private readonly Logger _logger;
 
         public SiteShowService(ISiteShowRepository repository,
@@ -112,6 +129,8 @@ namespace NzbDrone.Core.AnimeSite
                                Lazy<ISiteDownloadService> siteDownloadService,
                                IEpisodeService episodeService,
                                IMediaFileService mediaFileService,
+                               IDeleteMediaFiles mediaFileDeletionService,
+                               ISiteFileRepairService fileRepairService,
                                Logger logger)
         {
             _repository = repository;
@@ -127,10 +146,12 @@ namespace NzbDrone.Core.AnimeSite
             _rootFolderService = rootFolderService;
             _qualityProfileService = qualityProfileService;
             _diskProvider = diskProvider;
+            _mediaFileDeletionService = mediaFileDeletionService;
             _fetcher = fetcher;
             _siteDownloadService = siteDownloadService;
             _episodeService = episodeService;
             _mediaFileService = mediaFileService;
+            _fileRepairService = fileRepairService;
             _logger = logger;
         }
 
@@ -420,9 +441,7 @@ namespace NzbDrone.Core.AnimeSite
 
             // The series this row resolved to before the manual link -- its
             // own scrape-backed / AniList-backed series, if it has one.
-            var previous = _seriesService.GetAllSeries().FirstOrDefault(s =>
-                s.TvdbId == SiteSeriesIds.FromSiteShowId(show.Id) ||
-                (show.AniListId > 0 && (s.TvdbId == AniListSeriesIds.FromAniListId(show.AniListId) || s.AniListIds.Contains(show.AniListId))));
+            var previous = AutoResolvedSeries(show);
 
             show.MappedSeriesId = series.Id;
             show.MappedSeason = season is > 0 ? season.Value : SeasonTitleParser.Parse(show.Title).Season;
@@ -442,6 +461,90 @@ namespace NzbDrone.Core.AnimeSite
             _commandQueueManager.Push(new RescanSeriesCommand(series.Id));
 
             return show;
+        }
+
+        // The library series a row resolves to with no manual link -- its own
+        // synthetic series, if it has one.
+        private Series AutoResolvedSeries(SiteShow show)
+        {
+            return _seriesService.GetAllSeries().FirstOrDefault(s =>
+                s.TvdbId == SiteSeriesIds.FromSiteShowId(show.Id) ||
+                (show.AniListId > 0 && (s.TvdbId == AniListSeriesIds.FromAniListId(show.AniListId) || s.AniListIds.Contains(show.AniListId))));
+        }
+
+        public SiteRepairResult RepairShow(int showId, bool webOnly)
+        {
+            var show = _repository.Get(showId);
+            if (show == null)
+            {
+                throw new SiteSeriesAddException("Site show not found.");
+            }
+
+            var series = show.MappedSeriesId > 0
+                ? _seriesService.GetAllSeries().FirstOrDefault(s => s.Id == show.MappedSeriesId)
+                : AutoResolvedSeries(show);
+
+            var result = new SiteRepairResult();
+            if (series == null)
+            {
+                _logger.Debug("Sites repair: '{0}' isn't in the library yet", show.Title);
+                return result;
+            }
+
+            var season = show.MappedSeason > 0 ? show.MappedSeason : SeasonTitleParser.Parse(show.Title).Season;
+            var episodes = _episodeService.GetEpisodeBySeries(series.Id);
+            var episodeByFileId = episodes.Where(e => e.EpisodeFileId > 0).ToDictionary(e => e.EpisodeFileId);
+            var hasSeason = episodes.Any(e => e.SeasonNumber == season);
+
+            foreach (var file in _mediaFileService.GetFilesBySeries(series.Id))
+            {
+                if (!episodeByFileId.TryGetValue(file.Id, out var episode))
+                {
+                    continue;
+                }
+
+                if (hasSeason && episode.SeasonNumber != season)
+                {
+                    continue;
+                }
+
+                var isWeb = (file.Quality?.Quality?.Name ?? string.Empty).Contains("WEB", StringComparison.OrdinalIgnoreCase);
+                if (webOnly && !isWeb)
+                {
+                    continue;
+                }
+
+                var path = Path.Combine(series.Path, file.RelativePath);
+
+                if (_fileRepairService.TryRepairInPlace(path))
+                {
+                    result.Repaired++;
+                    continue;
+                }
+
+                // Couldn't re-mux it (truncated / unreadable) -- delete and
+                // grab it again with the current resolver.
+                try
+                {
+                    _mediaFileDeletionService.DeleteEpisodeFile(series, file);
+                    if (_siteDownloadService.Value.StartDownload(showId, episode.EpisodeNumber, releaseUrl: null, skipIfPresent: false) != null)
+                    {
+                        result.Redownloaded++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Sites repair: couldn't replace '{0}'", path);
+                }
+            }
+
+            _logger.Info("Sites repair '{0}': re-muxed {1}, re-downloaded {2}", show.Title, result.Repaired, result.Redownloaded);
+            if (result.Repaired > 0 || result.Redownloaded > 0)
+            {
+                _commandQueueManager.Push(new RescanSeriesCommand(series.Id));
+            }
+
+            return result;
         }
 
         // On a manual link, move the episode files from the row's old

@@ -22,7 +22,12 @@ import SiteShow from './SiteShow';
 import SiteShowRelease from './SiteShowRelease';
 import useSiteDownloads, { useDownloadEpisodes } from './useSiteDownloads';
 import useSiteShowEpisodes, { useEpisodeReleases } from './useSiteShowEpisodes';
-import { useLibrarySeries, useSetSiteShowLink, useSiteShow } from './useSiteShows';
+import {
+  useLibrarySeries,
+  useRepairSiteShow,
+  useSetSiteShowLink,
+  useSiteShow,
+} from './useSiteShows';
 import styles from './SiteShowDetailModal.css';
 
 function progressPercent(download: SiteDownload) {
@@ -336,6 +341,40 @@ function LinkToSeries({ show }: { show: SiteShow }) {
   );
 }
 
+// Re-mux this show's stream-downloaded files in place (or re-download the
+// ones that can't be fixed) -- for episodes from the old remux that don't
+// play right on some clients.
+function RepairPlayback({ show }: { show: SiteShow }) {
+  const { mutate: repair, isPending, data, error } = useRepairSiteShow(show.id);
+
+  const handleRepair = useCallback(() => {
+    repair({ all: false });
+  }, [repair]);
+
+  if (!show.seriesId) {
+    return null;
+  }
+
+  return (
+    <div className={styles.linkPanel}>
+      <span>{translate('SitesRepairPlayback')}</span>
+      <Button size={sizes.SMALL} isDisabled={isPending} onPress={handleRepair}>
+        {isPending ? translate('SitesRepairRunning') : translate('SitesRepair')}
+      </Button>
+      {error ? (
+        <span className={styles.linkCurrent}>{getErrorMessage(error)}</span>
+      ) : data ? (
+        <span className={styles.linkCurrent}>
+          {translate('SitesRepairDone', {
+            repaired: data.repaired,
+            redownloaded: data.redownloaded,
+          })}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 // Show detail: synopsis, episode list, and per-episode Search / Download
 // plus a bulk episode-range download.
 function SiteShowDetailModal({
@@ -459,6 +498,7 @@ function SiteShowDetailModal({
               ) : null}
 
               <LinkToSeries show={show} />
+              <RepairPlayback show={show} />
 
               {availableNumbers.length > 0 ? (
                 <div className={styles.downloadPanel}>

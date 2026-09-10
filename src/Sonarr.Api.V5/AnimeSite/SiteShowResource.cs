@@ -49,6 +49,20 @@ public class SiteShowLinkResource
     public int? Season { get; set; }
 }
 
+// Body for POST /siteshow/{id}/repair. all=true re-muxes every file, not
+// just the WEB-DL / stream ones.
+public class SiteRepairRequest
+{
+    public bool All { get; set; }
+}
+
+// Result of POST /siteshow/{id}/repair.
+public class SiteRepairResource
+{
+    public int Repaired { get; set; }
+    public int Redownloaded { get; set; }
+}
+
 public static class SiteShowResourceMapper
 {
     public static SiteShowResource? ToResource(this SiteShow? model)

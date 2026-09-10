@@ -39,6 +39,30 @@ export const useSetSiteShowLink = (showId: number) => {
   });
 };
 
+interface SiteRepairResult {
+  repaired: number;
+  redownloaded: number;
+}
+
+// POST /siteshow/{id}/repair -- re-mux this show's stream files in place,
+// re-downloading any that can't be fixed.
+export const useRepairSiteShow = (showId: number) => {
+  const queryClient = useQueryClient();
+
+  return useApiMutation<SiteRepairResult, { all: boolean }>({
+    path: `/siteshow/${showId}/repair`,
+    method: 'POST',
+    mutationOptions: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: [`/siteshow/${showId}/episodes`],
+        });
+        queryClient.invalidateQueries({ queryKey: ['/sitedownload'] });
+      },
+    },
+  });
+};
+
 // One catalogue show, polled while `enabled` (the detail modal is open).
 export const useSiteShow = (showId: number, enabled: boolean) => {
   return useApiQuery<SiteShow>({

@@ -17,6 +17,10 @@ public class SiteShowResource : RestResource
     public List<string> Genres { get; set; } = new();
     public int AniListId { get; set; }
 
+    // Manual link set from the show detail view; 0 when unset.
+    public int MappedSeriesId { get; set; }
+    public int MappedSeason { get; set; }
+
     // Set by the controller when a matching library series exists.
     public int? SeriesId { get; set; }
     public string? SeriesTitleSlug { get; set; }
@@ -35,6 +39,14 @@ public class SiteShowAddResource
     public string? RootFolderPath { get; set; }
     public int? QualityProfileId { get; set; }
     public bool SearchForMissingEpisodes { get; set; }
+}
+
+// Body for PUT /siteshow/{id}/link. SeriesId 0 (or omitted) clears the
+// link; Season omitted uses the season parsed from the row title.
+public class SiteShowLinkResource
+{
+    public int SeriesId { get; set; }
+    public int? Season { get; set; }
 }
 
 public static class SiteShowResourceMapper
@@ -63,7 +75,9 @@ public static class SiteShowResourceMapper
             Episodes = model.Episodes,
             Status = model.Status,
             Genres = (model.Genres ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
-            AniListId = model.AniListId
+            AniListId = model.AniListId,
+            MappedSeriesId = model.MappedSeriesId,
+            MappedSeason = model.MappedSeason
         };
     }
 

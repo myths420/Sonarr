@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import Alert from 'Components/Alert';
+import SelectInput, { SelectInputOption } from 'Components/Form/SelectInput';
 import TextInput from 'Components/Form/TextInput';
 import Label from 'Components/Label';
 import Button from 'Components/Link/Button';
@@ -21,7 +22,7 @@ import SiteShow from './SiteShow';
 import SiteShowRelease from './SiteShowRelease';
 import useSiteDownloads, { useDownloadEpisodes } from './useSiteDownloads';
 import useSiteShowEpisodes, { useEpisodeReleases } from './useSiteShowEpisodes';
-import { useSiteShow } from './useSiteShows';
+import { useLibrarySeries, useSetSiteShowLink, useSiteShow } from './useSiteShows';
 import styles from './SiteShowDetailModal.css';
 
 function progressPercent(download: SiteDownload) {
@@ -242,6 +243,99 @@ function EpisodeRow({
   );
 }
 
+// Pin this catalogue row to a library series (and season) by hand when
+// the auto-match can't -- e.g. "Btth Season 5" -> "Battle Through The
+// Heavens", season 5.
+function LinkToSeries({ show }: { show: SiteShow }) {
+  const { data: seriesList } = useLibrarySeries(true);
+  const { mutate: setLink, isPending, error } = useSetSiteShowLink(show.id);
+
+  const sortedSeries = useMemo(
+    () =>
+      [...seriesList].sort((a, b) =>
+        (a.sortTitle || a.title).localeCompare(b.sortTitle || b.title)
+      ),
+    [seriesList]
+  );
+
+  const [seriesId, setSeriesId] = useState<number>(show.mappedSeriesId || 0);
+  const [season, setSeason] = useState<string>(
+    show.mappedSeason ? String(show.mappedSeason) : ''
+  );
+
+  const linkedSeries = sortedSeries.find((s) => s.id === show.mappedSeriesId);
+
+  const options: SelectInputOption[] = useMemo(
+    () => [
+      { key: 0, value: translate('SitesLinkPickSeries') },
+      ...sortedSeries.map((s) => ({ key: s.id, value: s.title })),
+    ],
+    [sortedSeries]
+  );
+
+  const handleSeriesChange = useCallback(
+    ({ value }: InputChanged<string>) => setSeriesId(Number(value) || 0),
+    []
+  );
+  const handleSeasonChange = useCallback(
+    ({ value }: InputChanged<string>) => setSeason(value),
+    []
+  );
+  const handleLink = useCallback(() => {
+    setLink({ seriesId, season: Number(season) || undefined });
+  }, [setLink, seriesId, season]);
+  const handleUnlink = useCallback(() => {
+    setSeriesId(0);
+    setSeason('');
+    setLink({ seriesId: 0 });
+  }, [setLink]);
+
+  return (
+    <div className={styles.linkPanel}>
+      <span>{translate('SitesLinkToSeries')}</span>
+      <SelectInput
+        className={styles.linkSelect}
+        name="linkSeries"
+        value={seriesId}
+        values={options}
+        isDisabled={isPending}
+        onChange={handleSeriesChange}
+      />
+      <span>{translate('Season')}</span>
+      <TextInput
+        className={styles.linkSeason}
+        name="linkSeason"
+        type="number"
+        value={season}
+        onChange={handleSeasonChange}
+      />
+      <Button
+        kind={kinds.PRIMARY}
+        size={sizes.SMALL}
+        isDisabled={isPending || seriesId <= 0}
+        onPress={handleLink}
+      >
+        {translate('SitesLinkSave')}
+      </Button>
+      {show.mappedSeriesId > 0 ? (
+        <Button size={sizes.SMALL} isDisabled={isPending} onPress={handleUnlink}>
+          {translate('SitesLinkClear')}
+        </Button>
+      ) : null}
+      {error ? (
+        <span className={styles.linkCurrent}>{getErrorMessage(error)}</span>
+      ) : linkedSeries ? (
+        <span className={styles.linkCurrent}>
+          {translate('SitesLinkedTo', {
+            title: linkedSeries.title,
+            season: show.mappedSeason,
+          })}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 // Show detail: synopsis, episode list, and per-episode Search / Download
 // plus a bulk episode-range download.
 function SiteShowDetailModal({
@@ -363,6 +457,8 @@ function SiteShowDetailModal({
               {overview ? (
                 <div className={styles.overview}>{overview}</div>
               ) : null}
+
+              <LinkToSeries show={show} />
 
               {availableNumbers.length > 0 ? (
                 <div className={styles.downloadPanel}>

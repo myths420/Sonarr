@@ -72,8 +72,11 @@ public class SiteShowController : Controller
         var seriesByCleanTitle = new Dictionary<string, NzbDrone.Core.Tv.Series>();
         var seriesByAniListId = new Dictionary<int, NzbDrone.Core.Tv.Series>();
         var seriesBySiteShowId = new Dictionary<int, NzbDrone.Core.Tv.Series>();
+        var seriesById = new Dictionary<int, NzbDrone.Core.Tv.Series>();
         foreach (var series in _seriesService.GetAllSeries())
         {
+            seriesById[series.Id] = series;
+
             var clean = series.Title.CleanSeriesTitle();
             if (!string.IsNullOrEmpty(clean))
             {
@@ -111,8 +114,14 @@ public class SiteShowController : Controller
         {
             NzbDrone.Core.Tv.Series? series = null;
 
-            // Exact id links first, cleaned title as a fallback.
-            if (seriesBySiteShowId.TryGetValue(resource.Id, out var siteSeries))
+            // A hand-set link wins over everything.
+            if (resource.MappedSeriesId > 0)
+            {
+                seriesById.TryGetValue(resource.MappedSeriesId, out series);
+            }
+
+            // Exact id links next, cleaned title as a fallback.
+            if (series == null && seriesBySiteShowId.TryGetValue(resource.Id, out var siteSeries))
             {
                 series = siteSeries;
             }
@@ -196,9 +205,19 @@ public class SiteShowController : Controller
 
         if (linked.SeriesId is int seriesId)
         {
-            var season = SeasonTitleParser.Parse(show.Title).Season;
-            var onDisk = _episodeService.GetEpisodeBySeries(seriesId)
-                .Where(e => e.SeasonNumber == season && e.HasFile)
+            var episodes = _episodeService.GetEpisodeBySeries(seriesId);
+            var season = show.MappedSeason > 0
+                ? show.MappedSeason
+                : SeasonTitleParser.Parse(show.Title).Season;
+
+            // A scrape-backed series keeps every episode in season 1 even
+            // when the catalogue row says "Season 5". If the linked series
+            // has no episodes in the row's season, match on episode number
+            // alone.
+            var hasThatSeason = episodes.Any(e => e.SeasonNumber == season);
+
+            var onDisk = episodes
+                .Where(e => e.HasFile && (!hasThatSeason || e.SeasonNumber == season))
                 .Select(e => e.EpisodeNumber)
                 .ToHashSet();
 
@@ -251,6 +270,31 @@ public class SiteShowController : Controller
                 request?.RootFolderPath,
                 request?.QualityProfileId,
                 request?.SearchForMissingEpisodes ?? false);
+        }
+        catch (SiteSeriesAddException ex)
+        {
+            return UnprocessableEntity(ex.Message);
+        }
+
+        var resource = _siteShowService.Get(id).ToResource()!;
+        LinkLibrarySeries(new List<SiteShowResource> { resource });
+        return resource;
+    }
+
+    // Pins this catalogue row to a library series by hand (seriesId 0 or
+    // omitted clears it). season defaults to the one parsed from the title.
+    [HttpPut("{id:int}/link")]
+    [Produces("application/json")]
+    public ActionResult<SiteShowResource> SetSiteShowLink(int id, [FromBody] SiteShowLinkResource? request)
+    {
+        if (_siteShowService.Get(id) == null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            _siteShowService.SetManualLink(id, request?.SeriesId ?? 0, request?.Season);
         }
         catch (SiteSeriesAddException ex)
         {

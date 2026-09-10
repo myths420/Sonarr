@@ -111,7 +111,9 @@ namespace NzbDrone.Core.AnimeSite
 
             if (skipIfPresent && series != null)
             {
-                var haveSeason = SeasonTitleParser.Parse(show.Title).Season;
+                var haveSeason = show.MappedSeason > 0
+                    ? show.MappedSeason
+                    : SeasonTitleParser.Parse(show.Title).Season;
                 if (HaveEqualOrBetterCopy(series, haveSeason, episodeNumber, release))
                 {
                     _logger.Debug("Sites: '{0}' S{1:00}E{2:00} already in the library at an equal or better quality -- skipping", show.Title, haveSeason, episodeNumber);
@@ -125,8 +127,11 @@ namespace NzbDrone.Core.AnimeSite
                 // A "<Show> Season 2" catalogue row is folded into the base
                 // series as Season 2 -- put the file in that season's
                 // folder so the rescan imports it in place rather than
-                // leaving it loose in the series root.
-                var season = SeasonTitleParser.Parse(show.Title).Season;
+                // leaving it loose in the series root. A hand-set link
+                // overrides the season parsed from the title.
+                var season = show.MappedSeason > 0
+                    ? show.MappedSeason
+                    : SeasonTitleParser.Parse(show.Title).Season;
 
                 // Include a quality tag so the rescan import isn't rejected
                 // for "Unknown" quality by the series' quality profile.

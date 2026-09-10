@@ -16,6 +16,10 @@ interface CssExports {
   'labels': string;
   'layout': string;
   'libraryLink': string;
+  'linkCurrent': string;
+  'linkPanel': string;
+  'linkSeason': string;
+  'linkSelect': string;
   'noEpisodes': string;
   'overview': string;
   'poster': string;

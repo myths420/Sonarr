@@ -14,6 +14,10 @@ export interface SiteShow extends ModelBase {
   genres: string[];
   aniListId: number;
 
+  // Manual link set from the detail view; 0 when unset.
+  mappedSeriesId: number;
+  mappedSeason: number;
+
   // Set when a Sonarr series with a matching title is already in the library.
   seriesId?: number;
   seriesTitleSlug?: string;

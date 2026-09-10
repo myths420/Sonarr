@@ -54,6 +54,11 @@ namespace NzbDrone.Core.AnimeSite
         // match exists, otherwise built from the scraped episode list (see
         // AniListSeriesIds / SiteSeriesIds).
         Series AddAsSeries(int showId, string rootFolderPath, int? qualityProfileId, bool searchForMissingEpisodes);
+
+        // Pins this catalogue row to a library series (and one of its
+        // seasons) by hand. seriesId <= 0 clears the link. season null falls
+        // back to the season parsed from the row title.
+        SiteShow SetManualLink(int showId, int seriesId, int? season);
     }
 
     public class SiteSeriesAddException : Exception
@@ -393,12 +398,51 @@ namespace NzbDrone.Core.AnimeSite
             return _releaseResolver.GetReleases(options, episodeHtml, episode.Url, show.Title, episodeNumber, _logger);
         }
 
+        public SiteShow SetManualLink(int showId, int seriesId, int? season)
+        {
+            var show = _repository.Get(showId);
+            if (show == null)
+            {
+                throw new SiteSeriesAddException("Site show not found.");
+            }
+
+            if (seriesId <= 0)
+            {
+                show.MappedSeriesId = 0;
+                show.MappedSeason = 0;
+                _repository.Update(show);
+                _logger.Info("Cleared the manual library link on site show '{0}'", show.Title);
+                return show;
+            }
+
+            var series = _seriesService.GetAllSeries().FirstOrDefault(s => s.Id == seriesId)
+                         ?? throw new SiteSeriesAddException($"Series {seriesId} not found.");
+
+            show.MappedSeriesId = series.Id;
+            show.MappedSeason = season is > 0 ? season.Value : SeasonTitleParser.Parse(show.Title).Season;
+            _repository.Update(show);
+
+            _logger.Info("Linked site show '{0}' to series {1} '{2}' as season {3}", show.Title, series.Id, series.Title, show.MappedSeason);
+            _commandQueueManager.Push(new RescanSeriesCommand(series.Id));
+
+            return show;
+        }
+
         public Series AddAsSeries(int showId, string rootFolderPath, int? qualityProfileId, bool searchForMissingEpisodes)
         {
             var show = _repository.Get(showId);
             if (show == null)
             {
                 throw new SiteSeriesAddException("Site show not found.");
+            }
+
+            if (show.MappedSeriesId > 0)
+            {
+                var mapped = _seriesService.GetAllSeries().FirstOrDefault(s => s.Id == show.MappedSeriesId);
+                if (mapped != null)
+                {
+                    return mapped;
+                }
             }
 
             var aniListId = show.AniListId;

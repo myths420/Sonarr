@@ -23,6 +23,13 @@ namespace NzbDrone.Core.AnimeSite
         public int AniListId { get; set; }
         public DateTime LastSyncTime { get; set; }
 
+        // Manual override: a library series this row belongs to, and which
+        // of its seasons, set from the Sites show detail view when the
+        // auto-match can't line up (abbreviations, typos, odd season names).
+        // 0 = not set.
+        public int MappedSeriesId { get; set; }
+        public int MappedSeason { get; set; }
+
         // Cached scraped episode list (see SiteShowEpisode) and when it was
         // last refreshed. Kept current by the Sites sync so an AniList-backed
         // series can be topped up with real air dates without a live scrape.

@@ -41,6 +41,33 @@
   border-radius: 4px;
 }
 
+.linkPanel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+
+  margin-bottom: 15px;
+  padding: 10px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+}
+
+.linkSelect {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.linkSeason {
+  width: 70px;
+}
+
+.linkCurrent {
+  flex-basis: 100%;
+  color: var(--disabledColor);
+  font-size: 12px;
+}
+
 .rangeRow {
   display: flex;
   align-items: center;

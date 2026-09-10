@@ -13,6 +13,7 @@
 
 const { chromium } = require('patchright');
 const { spawn, spawnSync } = require('child_process');
+const { downloadEnglishVtt } = require('./hlssubs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -157,7 +158,8 @@ async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', max
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-'));
     const seg = await downloadSegments(mediaBody, mediaUrl, dir, referer);
-    return { streamPath: seg.path, isFmp4: seg.isFmp4, height: pick.h, dir };
+    const subPath = await downloadEnglishVtt(playlists[masterUrl], masterUrl, dir, referer);
+    return { streamPath: seg.path, isFmp4: seg.isFmp4, height: pick.h, dir, subPath };
   } finally {
     await browser.close().catch(() => {});
   }
@@ -195,13 +197,13 @@ async function dailymotionFetch(req, res, query) {
   const outPath = path.join(built.dir, 'out.mp4');
   const remux = () =>
     new Promise((resolve, reject) => {
-      const args = [
-        '-hide_banner', '-loglevel', 'error',
-        '-i', built.streamPath,
-        '-map', '0',
-        '-c', 'copy',
-      ];
+      const args = ['-hide_banner', '-loglevel', 'error', '-i', built.streamPath];
+      if (built.subPath) args.push('-i', built.subPath);
+      args.push('-map', '0');
+      if (built.subPath) args.push('-map', '1:0');
+      args.push('-c', 'copy');
       if (!built.isFmp4) args.push('-bsf:a', 'aac_adtstoasc');
+      if (built.subPath) args.push('-c:s', 'mov_text', '-metadata:s:s:0', 'language=eng');
       args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', '-y', outPath);
       const ff = spawn('ffmpeg', args);
       let errTail = '';

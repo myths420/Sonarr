@@ -19,7 +19,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund \
     && npx patchright install chromium
 
-COPY server.js captcha.js dailymotion.js rumble.js ./
+COPY server.js captcha.js dailymotion.js rumble.js hlssubs.js ./
 
 EXPOSE 3000
 

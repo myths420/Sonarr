@@ -19,6 +19,7 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { downloadEnglishVtt } = require('./hlssubs');
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -72,8 +73,8 @@ async function httpBuffer(url, referer) {
 // every segment here and concatenate them into one MPEG-TS file (TS
 // segments join cleanly at the byte level), which ffmpeg reads fine.
 //
-// Returns { tsPath, height, dir }.
-async function buildStream({ embed, m3u8, referer, maxHeight = 4320 }) {
+// Returns { tsPath, height, dir, subPath }.
+async function buildStream({ embed, m3u8, referer, maxHeight = 1080 }) {
   const master = m3u8 || (await masterFromEmbed(embed, referer));
   const masterBody = await httpText(master, referer);
 
@@ -138,7 +139,8 @@ async function buildStream({ embed, m3u8, referer, maxHeight = 4320 }) {
   });
 
   await new Promise((resolve) => out.end(resolve));
-  return { tsPath, height: pick.h, dir };
+  const subPath = await downloadEnglishVtt(masterBody, master, dir, referer);
+  return { tsPath, height: pick.h, dir, subPath };
 }
 
 async function rumbleFetch(req, res, query) {
@@ -150,7 +152,7 @@ async function rumbleFetch(req, res, query) {
   }
 
   const referer = query.get('referer') || '';
-  const maxHeight = Number(query.get('max') || query.get('q') || 4320) || 4320;
+  const maxHeight = Number(query.get('max') || query.get('q') || 1080) || 1080;
 
   if (req.method === 'HEAD') {
     res.writeHead(200, { 'content-type': 'video/mp4' });
@@ -168,16 +170,16 @@ async function rumbleFetch(req, res, query) {
   const outPath = path.join(built.dir, 'out.mp4');
   const remux = () =>
     new Promise((resolve, reject) => {
-      const ff = spawn('ffmpeg', [
-        '-hide_banner', '-loglevel', 'error',
-        '-fflags', '+genpts',
-        '-i', built.tsPath,
-        '-map', '0',
-        '-c', 'copy',
-        '-bsf:a', 'aac_adtstoasc',
-        '-movflags', '+faststart',
-        '-y', outPath,
-      ]);
+      // No -fflags +genpts: the concatenated TS keeps real timestamps,
+      // and forcing PTS regeneration made playback race / skip around.
+      const args = ['-hide_banner', '-loglevel', 'error', '-i', built.tsPath];
+      if (built.subPath) args.push('-i', built.subPath);
+      args.push('-map', '0');
+      if (built.subPath) args.push('-map', '1:0');
+      args.push('-c', 'copy', '-bsf:a', 'aac_adtstoasc');
+      if (built.subPath) args.push('-c:s', 'mov_text', '-metadata:s:s:0', 'language=eng');
+      args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', '-y', outPath);
+      const ff = spawn('ffmpeg', args);
       let errTail = '';
       ff.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); process.stderr.write(d); });
       ff.on('error', reject);

@@ -24,6 +24,7 @@ const http = require('http');
 const { chromium } = require('patchright');
 const { solveTurnstile, captchaEnabled, CAPTCHA_PROVIDER, CAPTCHA_ENDPOINT } = require('./captcha');
 const { dailymotionFetch } = require('./dailymotion');
+const { rumbleFetch } = require('./rumble');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const NAV_TIMEOUT = parseInt(process.env.NAV_TIMEOUT_MS || '45000', 10);
@@ -223,6 +224,11 @@ const server = http.createServer((req, res) => {
   if ((req.method === 'GET' || req.method === 'HEAD') && req.url.startsWith('/dailymotion/fetch')) {
     const q = new URL(req.url, 'http://x').searchParams;
     return dailymotionFetch(req, res, q);
+  }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && req.url.startsWith('/rumble/fetch')) {
+    const q = new URL(req.url, 'http://x').searchParams;
+    return rumbleFetch(req, res, q);
   }
 
   if (req.method !== 'POST' || req.url !== '/resolve') {

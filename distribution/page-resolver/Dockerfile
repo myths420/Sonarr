@@ -11,7 +11,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# ffmpeg: remuxes the Dailymotion HLS stream to a single MP4.
+# ffmpeg: remuxes the Dailymotion / Rumble HLS stream to a single MP4.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,7 +19,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund \
     && npx patchright install chromium
 
-COPY server.js captcha.js dailymotion.js ./
+COPY server.js captcha.js dailymotion.js rumble.js ./
 
 EXPOSE 3000
 

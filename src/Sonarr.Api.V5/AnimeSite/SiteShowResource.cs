@@ -49,11 +49,15 @@ public class SiteShowLinkResource
     public int? Season { get; set; }
 }
 
-// Body for POST /siteshow/{id}/repair. all=true re-muxes every file, not
-// just the WEB-DL / stream ones.
+// Body for POST /siteshow/{id}/repair. all=true covers every file, not
+// just the WEB-DL / stream ones. redownload=true skips the in-place
+// re-mux and deletes + re-downloads each file (picks up muxed subtitles
+// and the 1080p cap from the current resolver).
 public class SiteRepairRequest
 {
     public bool All { get; set; }
+
+    public bool Redownload { get; set; }
 }
 
 // Result of POST /siteshow/{id}/repair.

@@ -64,7 +64,7 @@ namespace NzbDrone.Core.AnimeSite
         // Dailymotion / Rumble path) and re-downloads them with the current
         // resolver. webOnly=false wipes every file for the show. Used to
         // replace files from the pre-fix remux that play badly.
-        SiteRepairResult RepairShow(int showId, bool webOnly);
+        SiteRepairResult RepairShow(int showId, bool webOnly, bool forceRedownload = false);
     }
 
     public class SiteRepairResult
@@ -472,7 +472,7 @@ namespace NzbDrone.Core.AnimeSite
                 (show.AniListId > 0 && (s.TvdbId == AniListSeriesIds.FromAniListId(show.AniListId) || s.AniListIds.Contains(show.AniListId))));
         }
 
-        public SiteRepairResult RepairShow(int showId, bool webOnly)
+        public SiteRepairResult RepairShow(int showId, bool webOnly, bool forceRedownload = false)
         {
             var show = _repository.Get(showId);
             if (show == null)
@@ -516,7 +516,7 @@ namespace NzbDrone.Core.AnimeSite
 
                 var path = Path.Combine(series.Path, file.RelativePath);
 
-                if (_fileRepairService.TryRepairInPlace(path))
+                if (!forceRedownload && _fileRepairService.TryRepairInPlace(path))
                 {
                     result.Repaired++;
                     continue;

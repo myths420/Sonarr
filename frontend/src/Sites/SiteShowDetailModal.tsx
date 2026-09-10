@@ -351,6 +351,10 @@ function RepairPlayback({ show }: { show: SiteShow }) {
     repair({ all: false });
   }, [repair]);
 
+  const handleRedownload = useCallback(() => {
+    repair({ all: false, redownload: true });
+  }, [repair]);
+
   if (!show.seriesId) {
     return null;
   }
@@ -360,6 +364,9 @@ function RepairPlayback({ show }: { show: SiteShow }) {
       <span>{translate('SitesRepairPlayback')}</span>
       <Button size={sizes.SMALL} isDisabled={isPending} onPress={handleRepair}>
         {isPending ? translate('SitesRepairRunning') : translate('SitesRepair')}
+      </Button>
+      <Button size={sizes.SMALL} isDisabled={isPending} onPress={handleRedownload}>
+        {translate('SitesRepairRedownload')}
       </Button>
       {error ? (
         <span className={styles.linkCurrent}>{getErrorMessage(error)}</span>

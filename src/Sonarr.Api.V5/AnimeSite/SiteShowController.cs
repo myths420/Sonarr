@@ -318,7 +318,7 @@ public class SiteShowController : Controller
             return NotFound();
         }
 
-        var result = _siteShowService.RepairShow(id, webOnly: !(request?.All ?? false));
+        var result = _siteShowService.RepairShow(id, webOnly: !(request?.All ?? false), forceRedownload: request?.Redownload ?? false);
         return new SiteRepairResource { Repaired = result.Repaired, Redownloaded = result.Redownloaded };
     }
 }

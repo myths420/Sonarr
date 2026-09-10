@@ -2096,6 +2096,7 @@
   "SitesRepair": "Repair",
   "SitesRepairDone": "Re-muxed {repaired}, re-downloaded {redownloaded}.",
   "SitesRepairPlayback": "Fix playback",
+  "SitesRepairRedownload": "Re-download (subs + 1080p)",
   "SitesRepairRunning": "Repairing...",
   "SitesNoEpisodesFound": "No episodes found for this show.",
   "SitesNoMatches": "No shows match \"{term}\".",

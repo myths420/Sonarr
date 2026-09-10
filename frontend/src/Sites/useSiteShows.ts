@@ -49,7 +49,7 @@ interface SiteRepairResult {
 export const useRepairSiteShow = (showId: number) => {
   const queryClient = useQueryClient();
 
-  return useApiMutation<SiteRepairResult, { all: boolean }>({
+  return useApiMutation<SiteRepairResult, { all?: boolean; redownload?: boolean }>({
     path: `/siteshow/${showId}/repair`,
     method: 'POST',
     mutationOptions: {

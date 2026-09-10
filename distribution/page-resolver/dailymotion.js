@@ -29,8 +29,73 @@ function videoId(input) {
   return m[1];
 }
 
-// Returns { playlistPath, height } -- a local .m3u8 with absolute,
-// freshly-signed segment URLs for the highest variant <= maxHeight.
+async function fetchBuffer(url, referer) {
+  const headers = { 'User-Agent': UA, Accept: '*/*' };
+  if (referer) headers.Referer = referer;
+  const r = await fetch(url, { headers, redirect: 'follow' });
+  if (!r.ok) throw new Error('GET ' + url + ' -> ' + r.status);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+// Download an HLS media playlist's init + media segments into one file
+// (fMP4 fragments and MPEG-TS packets both concatenate cleanly at the
+// byte level). Handing ffmpeg a single local file -- rather than the
+// .m3u8 -- avoids the timestamp mangling (fast / jumpy playback) that
+// -fflags +genpts over an HLS input caused.
+// Returns { path, isFmp4 }.
+async function downloadSegments(mediaBody, mediaUrl, dir, referer) {
+  const abs = (u) => (/^https?:/.test(u) ? u : new URL(u, mediaUrl).href);
+  const lines = mediaBody.split('\n');
+  const parts = [];
+  let isFmp4 = false;
+
+  for (const line of lines) {
+    const map = line.match(/^#EXT-X-MAP:.*URI="([^"]+)"/i);
+    if (map) { parts.push(abs(map[1])); isFmp4 = true; continue; }
+    const t = line.trim();
+    if (t && !t.startsWith('#')) parts.push(abs(t));
+  }
+  if (parts.length === 0) throw new Error('media playlist had no segments');
+
+  const outPath = path.join(dir, isFmp4 ? 'all.mp4' : 'all.ts');
+  const out = fs.createWriteStream(outPath);
+  const bufs = new Array(parts.length);
+  let writeIdx = 0;
+
+  const flush = () => {
+    while (writeIdx < parts.length && bufs[writeIdx] !== undefined) {
+      out.write(bufs[writeIdx]);
+      bufs[writeIdx] = undefined;
+      writeIdx++;
+    }
+  };
+
+  const CONCURRENCY = 6;
+  let next = 0;
+  await new Promise((resolve, reject) => {
+    let active = 0;
+    let failed = null;
+    const pump = () => {
+      if (failed) return reject(failed);
+      if (writeIdx >= parts.length) return resolve();
+      while (active < CONCURRENCY && next < parts.length && next < writeIdx + CONCURRENCY * 4) {
+        const idx = next++;
+        active++;
+        fetchBuffer(parts[idx], referer)
+          .then((b) => { bufs[idx] = b; })
+          .catch((e) => { failed = e; })
+          .finally(() => { active--; flush(); pump(); });
+      }
+    };
+    pump();
+  });
+
+  await new Promise((r) => out.end(r));
+  return { path: outPath, isFmp4 };
+}
+
+// Returns { streamPath, isFmp4, height, dir } -- one local file with the
+// full video for the highest variant <= maxHeight.
 async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', maxHeight = 1080, timeoutMs = 60000 } = {}) {
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
@@ -90,13 +155,9 @@ async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', max
       throw new Error('Dailymotion media playlist fetch failed');
     }
 
-    const absolute = mediaBody.replace(/^(?!#)(\S.*)$/gm, (line) =>
-      /^https?:/.test(line) ? line : new URL(line, mediaUrl).href);
-
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-'));
-    const playlistPath = path.join(dir, 'stream.m3u8');
-    fs.writeFileSync(playlistPath, absolute);
-    return { playlistPath, height: pick.h, dir };
+    const seg = await downloadSegments(mediaBody, mediaUrl, dir, referer);
+    return { streamPath: seg.path, isFmp4: seg.isFmp4, height: pick.h, dir };
   } finally {
     await browser.close().catch(() => {});
   }
@@ -127,25 +188,22 @@ async function dailymotionFetch(req, res, query) {
     return res.end(JSON.stringify({ error: String(err.message || err) }));
   }
 
-  // Remux the whole thing to a real, seekable MP4 first (moov atom at the
-  // front via +faststart), THEN stream the file. A fragmented/streamed
-  // MP4 has no seek index, so skipping around shows macroblock garbage
-  // until the next keyframe -- this avoids that.
+  // Remux the concatenated stream to a real, seekable MP4 (moov atom at
+  // the front via +faststart). -c copy with the real segment timestamps
+  // -- no -fflags +genpts, which mangled the timeline (fast / jumpy
+  // playback). aac_adtstoasc only for MPEG-TS; fMP4 audio is already ASC.
   const outPath = path.join(built.dir, 'out.mp4');
   const remux = () =>
     new Promise((resolve, reject) => {
-      const ff = spawn('ffmpeg', [
+      const args = [
         '-hide_banner', '-loglevel', 'error',
-        '-allowed_extensions', 'ALL',
-        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-        '-fflags', '+genpts',
-        '-i', built.playlistPath,
+        '-i', built.streamPath,
         '-map', '0',
         '-c', 'copy',
-        '-bsf:a', 'aac_adtstoasc',
-        '-movflags', '+faststart',
-        '-y', outPath,
-      ]);
+      ];
+      if (!built.isFmp4) args.push('-bsf:a', 'aac_adtstoasc');
+      args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', '-y', outPath);
+      const ff = spawn('ffmpeg', args);
       let errTail = '';
       ff.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); process.stderr.write(d); });
       ff.on('error', reject);

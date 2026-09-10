@@ -32,17 +32,27 @@ async function httpText(url, referer) {
   return r.text();
 }
 
-// A donghuaplanet / generic player page -> the rumble hls-vod master URL.
-async function masterFromEmbed(embedUrl, referer) {
-  const html = await httpText(embedUrl, referer);
+// A player / server-hop page (donghuaplanet.com/vX, luciferdonghua .../v/N/,
+// rumble.com/embed/X) -> the rumble hls-vod master URL. Follows one nested
+// rumble/donghuaplanet iframe when the page is just a wrapper.
+async function masterFromEmbed(embedUrl, referer, depth = 0) {
+  // Rumble's embed JSON escapes its slashes ("https:\/\/...").
+  const html = (await httpText(embedUrl, referer)).replace(/\\\//g, '/');
 
-  const direct = html.match(/https?:\/\/rumble\.com\/hls-vod\/[A-Za-z0-9_-]+\/playlist\.m3u8/i);
-  if (direct) return direct[0];
+  // The hls-vod master lists every variant -- always prefer it.
+  const master = html.match(/https?:\/\/rumble\.com\/hls-vod\/[A-Za-z0-9_-]+\/playlist\.m3u8/i);
+  if (master) return master[0];
 
-  const fileProp = html.match(/["']file["']\s*:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i);
+  if (depth < 2) {
+    const nested = html.match(/<iframe[^>]*\bsrc=["'](https?:\/\/(?:rumble\.com\/embed|[a-z0-9.-]*donghuaplanet\.com)\/[^"']+)["']/i);
+    if (nested) return masterFromEmbed(nested[1], embedUrl, depth + 1);
+  }
+
+  const fileProp = html.match(/["'](?:file|url)["']\s*:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i);
   if (fileProp) return fileProp[1];
 
-  const anyM3u8 = html.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/i);
+  const anyM3u8 = html.match(/https?:\/\/[^"'\s]+\/playlist\.m3u8[^"'\s]*/i)
+    || html.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/i);
   if (anyM3u8) return anyM3u8[0];
 
   throw new Error('no HLS url found in embed ' + embedUrl);

@@ -71,7 +71,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         };
 
         private static readonly Regex DailymotionId = new Regex(
-            @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)|dailymotion\.com/player/[^""'?]+\?(?:[^""'#]*&)?video=([A-Za-z0-9]+)",
+            @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)|dailymotion\.com[^""'\s]*[?&]video=([A-Za-z0-9]+)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // The "Select Video Server" list: a base64 iframe blob plus a human
@@ -85,6 +85,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
         private static readonly Regex IframeSrc = new Regex(
             @"src=""([^""]+)""", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // A "[RUMBLE - Server]" <option> whose value is a same-site server-hop
+        // url (luciferdonghua .../v/N/) rather than an inline embed.
+        private static readonly Regex RumbleOption = new Regex(
+            @"<option[^>]*\svalue=""(https?://[^""]+)""[^>]*>([^<]*\bRUMBLE\b[^<]*)</option>",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex EnglishLabel = new Regex(
             @"\b(english|eng[\s-]?sub|all[\s-]?sub|multi[\s-]?sub|multiple[\s-]?sub)\b",
@@ -122,10 +128,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             return kept;
         }
 
-        // donghuaworld's "Dark Server" embeds the video from Rumble (via a
-        // player.donghuaplanet.com wrapper). page-resolver /rumble/fetch
-        // takes the embed url, follows it to the Rumble HLS master, and
-        // remuxes the highest variant to MP4.
+        // donghuaworld's "Dark Server" and luciferdonghua's "[RUMBLE - Server]"
+        // both play the episode from Rumble -- inline (donghuaworld, a base64
+        // player.donghuaplanet.com iframe) or one hop away (luciferdonghua, a
+        // <option value=".../v/N/"> the resolver follows). page-resolver
+        // /rumble/fetch takes the embed/hop url, follows it to the Rumble HLS
+        // master, and remuxes the highest variant (up to 4K) to MP4.
         private static IEnumerable<ResolvedRelease> RumbleReleases(AnimeSiteFetchOptions fetch, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
         {
             if (string.IsNullOrEmpty(episodeHtml) || fetch == null || !fetch.UsesResolver)
@@ -136,6 +144,34 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             var baseUrl = fetch.PageResolverUrl.TrimEnd('/');
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            foreach (var embed in RumbleEmbeds(episodeHtml))
+            {
+                if (!seen.Add(embed))
+                {
+                    continue;
+                }
+
+                var url = $"{baseUrl}/rumble/fetch?embed={Uri.EscapeDataString(embed)}";
+                if (!string.IsNullOrEmpty(episodeUrl))
+                {
+                    url += $"&referer={Uri.EscapeDataString(episodeUrl)}";
+                }
+
+                logger.Debug("Rumble server {0} for {1} episode {2}", embed, seriesTitle, episodeNumber);
+
+                yield return new ResolvedRelease
+                {
+                    // Tagged 1080p WEB-DL so both download paths parse a real
+                    // quality; the remux keeps whatever the source is (up to 4K).
+                    Title = $"{seriesTitle} - Episode {episodeNumber:000} [Rumble] 1080p WEB-DL",
+                    Url = url
+                };
+            }
+        }
+
+        private static IEnumerable<string> RumbleEmbeds(string episodeHtml)
+        {
+            // Inline base64 server (donghuaworld) -> decode -> iframe src.
             foreach (Match opt in ServerOption.Matches(episodeHtml))
             {
                 var blob = opt.Groups[1].Success ? opt.Groups[1].Value : opt.Groups[3].Value;
@@ -151,38 +187,19 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 }
 
                 var src = IframeSrc.Match(decoded);
-                if (!src.Success)
+                if (src.Success &&
+                    (src.Groups[1].Value.Contains("donghuaplanet.com", StringComparison.OrdinalIgnoreCase) ||
+                     src.Groups[1].Value.Contains("rumble.com", StringComparison.OrdinalIgnoreCase)))
                 {
-                    continue;
+                    yield return src.Groups[1].Value;
                 }
+            }
 
-                var embed = src.Groups[1].Value;
-                if (embed.IndexOf("donghuaplanet.com", StringComparison.OrdinalIgnoreCase) < 0 &&
-                    embed.IndexOf("rumble.com", StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    continue;
-                }
-
-                if (!seen.Add(embed))
-                {
-                    continue;
-                }
-
-                var url = $"{baseUrl}/rumble/fetch?embed={Uri.EscapeDataString(embed)}";
-                if (!string.IsNullOrEmpty(episodeUrl))
-                {
-                    url += $"&referer={Uri.EscapeDataString(episodeUrl)}";
-                }
-
-                logger.Debug("Rumble/Dark server embed {0} for {1} episode {2}", embed, seriesTitle, episodeNumber);
-
-                // Height is judged ~1080 (the 2560-wide variant is 1072 tall),
-                // so tag it 1080p WEB-DL like the Dailymotion path.
-                yield return new ResolvedRelease
-                {
-                    Title = $"{seriesTitle} - Episode {episodeNumber:000} [Rumble] 1080p WEB-DL",
-                    Url = url
-                };
+            // A "[RUMBLE - Server]" <option> whose value is a server-hop url
+            // (luciferdonghua .../v/N/) the resolver follows.
+            foreach (Match opt in RumbleOption.Matches(episodeHtml))
+            {
+                yield return opt.Groups[1].Value;
             }
         }
 

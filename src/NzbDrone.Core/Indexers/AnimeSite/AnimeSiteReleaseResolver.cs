@@ -71,13 +71,16 @@ namespace NzbDrone.Core.Indexers.AnimeSite
         };
 
         private static readonly Regex DailymotionId = new Regex(
-            @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)",
+            @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)|dailymotion\.com/player/[^""'?]+\?(?:[^""'#]*&)?video=([A-Za-z0-9]+)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        // The "Select Video Server" <option>s: a base64 iframe blob + a
-        // human label like "Hardsub English Dailymotion".
+        // The "Select Video Server" list: a base64 iframe blob plus a human
+        // label like "Hardsub English Dailymotion". Sites carry it either as
+        // <option value="<base64>">label</option> (animexin/donghuastream) or
+        // <a ... data-hash="<base64>">label</a> (donghuaworld).
         private static readonly Regex ServerOption = new Regex(
-            @"<option[^>]*\svalue=""([A-Za-z0-9+/=]{16,})""[^>]*>([^<]+)</option>",
+            @"<option[^>]*\svalue=""([A-Za-z0-9+/=]{16,})""[^>]*>([^<]+)</option>" +
+            @"|<a[^>]*\sdata-(?:hash|server|src|video)=""([A-Za-z0-9+/=]{16,})""[^>]*>([^<]+)</a>",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex IframeSrc = new Regex(
@@ -186,13 +189,18 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             var byId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var sawLabelledServers = false;
 
-            // Labelled server <option>s first (base64 iframe blobs).
+            // Labelled server list first (base64 iframe blobs). The regex
+            // matches both the <option value> and <a data-hash> shapes --
+            // groups 1/2 for the first, 3/4 for the second.
             foreach (Match opt in ServerOption.Matches(episodeHtml))
             {
+                var blob = opt.Groups[1].Success ? opt.Groups[1].Value : opt.Groups[3].Value;
+                var rawLabel = opt.Groups[1].Success ? opt.Groups[2].Value : opt.Groups[4].Value;
+
                 string decoded;
                 try
                 {
-                    decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(opt.Groups[1].Value));
+                    decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(blob));
                 }
                 catch (FormatException)
                 {
@@ -213,8 +221,10 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                     continue;
                 }
 
-                var id = dm.Groups[1].Success ? dm.Groups[1].Value : dm.Groups[2].Value;
-                var label = opt.Groups[2].Value.Trim();
+                var id = dm.Groups[1].Success ? dm.Groups[1].Value
+                    : dm.Groups[2].Success ? dm.Groups[2].Value
+                    : dm.Groups[3].Value;
+                var label = rawLabel.Trim();
                 var isIndo = IndonesianLabel.IsMatch(label);
                 var isEng = EnglishLabel.IsMatch(label);
 
@@ -239,7 +249,9 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             {
                 foreach (Match m in DailymotionId.Matches(episodeHtml))
                 {
-                    var id = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+                    var id = m.Groups[1].Success ? m.Groups[1].Value
+                        : m.Groups[2].Success ? m.Groups[2].Value
+                        : m.Groups[3].Value;
                     if (!string.IsNullOrEmpty(id))
                     {
                         byId.TryAdd(id, 0);

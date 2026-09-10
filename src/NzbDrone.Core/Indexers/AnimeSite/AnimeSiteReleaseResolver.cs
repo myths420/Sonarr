@@ -112,12 +112,78 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
 
             // Direct file hosts (Mediafire etc.) first -- a plain .mp4 grab
-            // beats a headless capture + remux. The Dailymotion English
-            // embed is appended as the fallback for when every direct link
-            // is dead; the Sites downloader walks the list top to bottom.
+            // beats a headless capture + remux. Then the Rumble "Dark
+            // Server" (donghuaworld -- higher bitrate, up to ~2.5K), then
+            // the Dailymotion English embed (1080p) as the last fallback.
+            // The Sites downloader walks the list top to bottom.
+            kept.AddRange(RumbleReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
             kept.AddRange(DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
 
             return kept;
+        }
+
+        // donghuaworld's "Dark Server" embeds the video from Rumble (via a
+        // player.donghuaplanet.com wrapper). page-resolver /rumble/fetch
+        // takes the embed url, follows it to the Rumble HLS master, and
+        // remuxes the highest variant to MP4.
+        private static IEnumerable<ResolvedRelease> RumbleReleases(AnimeSiteFetchOptions fetch, string episodeHtml, string episodeUrl, string seriesTitle, int episodeNumber, Logger logger)
+        {
+            if (string.IsNullOrEmpty(episodeHtml) || fetch == null || !fetch.UsesResolver)
+            {
+                yield break;
+            }
+
+            var baseUrl = fetch.PageResolverUrl.TrimEnd('/');
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (Match opt in ServerOption.Matches(episodeHtml))
+            {
+                var blob = opt.Groups[1].Success ? opt.Groups[1].Value : opt.Groups[3].Value;
+
+                string decoded;
+                try
+                {
+                    decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(blob));
+                }
+                catch (FormatException)
+                {
+                    continue;
+                }
+
+                var src = IframeSrc.Match(decoded);
+                if (!src.Success)
+                {
+                    continue;
+                }
+
+                var embed = src.Groups[1].Value;
+                if (embed.IndexOf("donghuaplanet.com", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    embed.IndexOf("rumble.com", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                if (!seen.Add(embed))
+                {
+                    continue;
+                }
+
+                var url = $"{baseUrl}/rumble/fetch?embed={Uri.EscapeDataString(embed)}";
+                if (!string.IsNullOrEmpty(episodeUrl))
+                {
+                    url += $"&referer={Uri.EscapeDataString(episodeUrl)}";
+                }
+
+                logger.Debug("Rumble/Dark server embed {0} for {1} episode {2}", embed, seriesTitle, episodeNumber);
+
+                // Height is judged ~1080 (the 2560-wide variant is 1072 tall),
+                // so tag it 1080p WEB-DL like the Dailymotion path.
+                yield return new ResolvedRelease
+                {
+                    Title = $"{seriesTitle} - Episode {episodeNumber:000} [Rumble] 1080p WEB-DL",
+                    Url = url
+                };
+            }
         }
 
         // Extract a Sonarr-parseable quality token from a scraper's own

@@ -110,30 +110,30 @@ public class SiteShowController : Controller
             }
         }
 
-        foreach (var resource in resources)
+        NzbDrone.Core.Tv.Series? ResolveDirect(int mappedSeriesId, int siteShowId, int aniListId, string? title)
         {
             NzbDrone.Core.Tv.Series? series = null;
 
             // A hand-set link wins over everything.
-            if (resource.MappedSeriesId > 0)
+            if (mappedSeriesId > 0)
             {
-                seriesById.TryGetValue(resource.MappedSeriesId, out series);
+                seriesById.TryGetValue(mappedSeriesId, out series);
             }
 
             // Exact id links next, cleaned title as a fallback.
-            if (series == null && seriesBySiteShowId.TryGetValue(resource.Id, out var siteSeries))
+            if (series == null && seriesBySiteShowId.TryGetValue(siteShowId, out var siteSeries))
             {
                 series = siteSeries;
             }
 
-            if (series == null && resource.AniListId > 0)
+            if (series == null && aniListId > 0)
             {
-                seriesByAniListId.TryGetValue(resource.AniListId, out series);
+                seriesByAniListId.TryGetValue(aniListId, out series);
             }
 
             if (series == null)
             {
-                var clean = (resource.Title ?? string.Empty).CleanSeriesTitle();
+                var clean = (title ?? string.Empty).CleanSeriesTitle();
                 if (!string.IsNullOrEmpty(clean))
                 {
                     seriesByCleanTitle.TryGetValue(clean, out series);
@@ -142,10 +142,62 @@ public class SiteShowController : Controller
 
             if (series == null)
             {
-                var matchKey = SiteTitleMatch.Key(resource.Title);
+                var matchKey = SiteTitleMatch.Key(title);
                 if (!string.IsNullOrEmpty(matchKey))
                 {
                     seriesByCleanTitle.TryGetValue(matchKey, out series);
+                }
+            }
+
+            return series;
+        }
+
+        // Bridge across sites: a catalogue row's own title sometimes
+        // doesn't match the library series' title at all (AniList's
+        // romaji/pinyin vs. a fan site's English translation, e.g. "Taigu
+        // Zhan Hun" vs. "Ancient War Soul"). Once ANY site's row for that
+        // show resolves by id, index its own title so an identically
+        // (or near-identically) titled row on a different site -- which
+        // can't resolve any other way -- still links to the same series.
+        // Built lazily since it scans every catalogue row, not just the
+        // ones in this response.
+        Dictionary<string, NzbDrone.Core.Tv.Series>? titleBridge = null;
+        Dictionary<string, NzbDrone.Core.Tv.Series> TitleBridge()
+        {
+            if (titleBridge != null)
+            {
+                return titleBridge;
+            }
+
+            titleBridge = new Dictionary<string, NzbDrone.Core.Tv.Series>();
+            foreach (var show in _siteShowService.GetAll())
+            {
+                var resolved = ResolveDirect(show.MappedSeriesId, show.Id, show.AniListId, show.Title);
+                if (resolved == null)
+                {
+                    continue;
+                }
+
+                var bridgeKey = SiteTitleMatch.Key(show.Title);
+                if (!string.IsNullOrEmpty(bridgeKey))
+                {
+                    titleBridge.TryAdd(bridgeKey, resolved);
+                }
+            }
+
+            return titleBridge;
+        }
+
+        foreach (var resource in resources)
+        {
+            var series = ResolveDirect(resource.MappedSeriesId, resource.Id, resource.AniListId, resource.Title);
+
+            if (series == null)
+            {
+                var bridgeKey = SiteTitleMatch.Key(resource.Title);
+                if (!string.IsNullOrEmpty(bridgeKey))
+                {
+                    TitleBridge().TryGetValue(bridgeKey, out series);
                 }
             }
 

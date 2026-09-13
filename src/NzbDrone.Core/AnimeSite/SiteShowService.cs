@@ -26,6 +26,10 @@ namespace NzbDrone.Core.AnimeSite
     public interface ISiteShowService
     {
         List<SiteShow> GetForSourceList(int sourceListId);
+
+        // Every catalogue row, across every site -- used to bridge a show
+        // across sites by title when it's already linked on one of them.
+        List<SiteShow> GetAll();
         SiteShow Get(int id);
 
         // Browses the site's catalogue script and upserts every show (title
@@ -158,6 +162,11 @@ namespace NzbDrone.Core.AnimeSite
         public List<SiteShow> GetForSourceList(int sourceListId)
         {
             return _repository.FindBySourceList(sourceListId);
+        }
+
+        public List<SiteShow> GetAll()
+        {
+            return _repository.All().ToList();
         }
 
         public SiteShow Get(int id)

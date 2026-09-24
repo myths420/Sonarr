@@ -28,6 +28,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         private readonly IDailySeriesService _dailySeriesService;
         private readonly IAniListSeriesInfoProxy _aniListSeriesInfoProxy;
         private readonly ISiteScrapeSeriesInfoProxy _siteScrapeSeriesInfoProxy;
+        private readonly IEpisodeService _episodeService;
         private readonly IHttpRequestBuilderFactory _requestBuilder;
 
         public SkyHookProxy(IHttpClient httpClient,
@@ -36,6 +37,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                             IDailySeriesService dailySeriesService,
                             IAniListSeriesInfoProxy aniListSeriesInfoProxy,
                             ISiteScrapeSeriesInfoProxy siteScrapeSeriesInfoProxy,
+                            IEpisodeService episodeService,
                             Logger logger)
         {
             _httpClient = httpClient;
@@ -45,6 +47,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             _dailySeriesService = dailySeriesService;
             _aniListSeriesInfoProxy = aniListSeriesInfoProxy;
             _siteScrapeSeriesInfoProxy = siteScrapeSeriesInfoProxy;
+            _episodeService = episodeService;
             _requestBuilder = requestBuilder.SkyHookTvdb;
         }
 
@@ -82,6 +85,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                 EnsureSitePoster(tuple.Item1, ids[0]);
                 MergeScrapedEpisodes(ids, tuple.Item2, aniListUnreachable);
                 AppendMappedRowEpisodes(tuple.Item1, tuple.Item2, existing?.Id);
+                PreserveExistingEpisodes(existing?.Id, tuple.Item2);
 
                 if (tuple.Item2.Count == 0 && existing != null)
                 {
@@ -97,8 +101,10 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             // Catalogue show with no AniList match (see SiteSeriesIds).
             if (SiteSeriesIds.IsSiteId(tvdbSeriesId))
             {
+                var existingSiteSeries = _seriesService.FindByTvdbId(tvdbSeriesId);
                 var tuple = _siteScrapeSeriesInfoProxy.GetSeriesInfo(SiteSeriesIds.ToSiteShowId(tvdbSeriesId));
-                AppendMappedRowEpisodes(tuple.Item1, tuple.Item2, _seriesService.FindByTvdbId(tvdbSeriesId)?.Id);
+                AppendMappedRowEpisodes(tuple.Item1, tuple.Item2, existingSiteSeries?.Id);
+                PreserveExistingEpisodes(existingSiteSeries?.Id, tuple.Item2);
                 return tuple;
             }
 
@@ -242,6 +248,69 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             catch (Exception ex)
             {
                 _logger.Debug(ex, "Couldn't append manually linked catalogue episodes for series {0}", seriesId);
+            }
+        }
+
+        // RefreshEpisodeService deletes (and later re-inserts under a new
+        // id) any episode that isn't in the list this proxy returns --
+        // which silently orphans that episode's grab history/download
+        // tracking, even though the file is still on disk. AniList and the
+        // catalogue scrape can both transiently under-report episodes
+        // during an outage or a formatting hiccup on the site, so always
+        // carry forward every (season, episode) Sonarr already has on
+        // record for this series. Purely additive -- never overrides a
+        // freshly fetched episode with a stale one.
+        private void PreserveExistingEpisodes(int? seriesId, List<Episode> episodes)
+        {
+            if (seriesId is not > 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var existingEpisodes = _episodeService.GetEpisodeBySeries(seriesId.Value);
+                if (existingEpisodes.Count == 0)
+                {
+                    return;
+                }
+
+                var have = new HashSet<(int Season, int Episode)>(episodes.Select(e => (e.SeasonNumber, e.EpisodeNumber)));
+                var restored = 0;
+                foreach (var episode in existingEpisodes)
+                {
+                    if (!have.Add((episode.SeasonNumber, episode.EpisodeNumber)))
+                    {
+                        continue;
+                    }
+
+                    episodes.Add(new Episode
+                    {
+                        SeriesId = episode.SeriesId,
+                        TvdbId = episode.TvdbId,
+                        SeasonNumber = episode.SeasonNumber,
+                        EpisodeNumber = episode.EpisodeNumber,
+                        Title = episode.Title,
+                        Overview = episode.Overview,
+                        AirDate = episode.AirDate,
+                        AirDateUtc = episode.AirDateUtc,
+                        Runtime = episode.Runtime,
+                        Monitored = episode.Monitored,
+                    });
+                    restored++;
+                }
+
+                if (restored > 0)
+                {
+                    episodes.Sort((a, b) => a.SeasonNumber != b.SeasonNumber
+                        ? a.SeasonNumber.CompareTo(b.SeasonNumber)
+                        : a.EpisodeNumber.CompareTo(b.EpisodeNumber));
+                    _logger.Debug("Kept {0} already-known episode(s) for series {1} the refresh didn't return", restored, seriesId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Couldn't preserve existing episodes for series {0}", seriesId);
             }
         }
 

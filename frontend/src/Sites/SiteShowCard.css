@@ -6,7 +6,8 @@
   height: 100%;
   border: 1px solid var(--borderColor);
   border-radius: 4px;
-  background-color: var(--defaultColor);
+  background-color: var(--cardBackgroundColor);
+  color: var(--textColor);
 }
 
 .underlay {

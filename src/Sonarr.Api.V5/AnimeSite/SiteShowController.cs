@@ -290,14 +290,22 @@ public class SiteShowController : Controller
     }
 
     // Downloads one episode: the top-ranked release, or ?releaseUrl=.
+    // skipIfPresent=true (the bulk range-download uses this) treats an
+    // episode that already has an equal-or-better copy as a silent no-op
+    // rather than an error -- a single-episode click always forces it.
     [HttpPost("{id:int}/episodes/{number:int}/download")]
     [Produces("application/json")]
-    public ActionResult<SiteDownloadResource> DownloadSiteShowEpisode(int id, int number, [FromQuery] string? releaseUrl = null)
+    public ActionResult<SiteDownloadResource> DownloadSiteShowEpisode(int id, int number, [FromQuery] string? releaseUrl = null, [FromQuery] bool skipIfPresent = false)
     {
-        var download = _siteDownloadService.StartDownload(id, number, releaseUrl);
+        var download = _siteDownloadService.StartDownload(id, number, releaseUrl, skipIfPresent);
 
         if (download == null)
         {
+            if (skipIfPresent)
+            {
+                return NoContent();
+            }
+
             return UnprocessableEntity("No downloadable release could be resolved for this episode.");
         }
 

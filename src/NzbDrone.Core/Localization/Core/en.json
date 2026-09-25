@@ -2084,6 +2084,7 @@
   "SitesCatalogueEmpty": "No shows in this site's catalogue yet. Use Refresh to browse it.",
   "SitesDownloadAll": "Download All",
   "SitesDownloadAllConfirm": "This adds all {count} shows to your library and starts searching for every episode. Downloads are throttled, but this can be a lot of grabs. Continue?",
+  "SitesDownloadMissing": "Download missing",
   "SitesDownloads": "Downloads",
   "SitesInLibrary": "In library",
   "SitesLibraryCount": "{have} of {total} in your library",

@@ -451,6 +451,25 @@ function SiteShowDetailModal({
     }
   }, [start, end, availableNumbers, downloadEpisodes]);
 
+  // Same range, but only the episodes that don't already have a file --
+  // for topping a show up after AniList/the site added new episodes
+  // without re-touching everything you already have.
+  const missingNumbers = useMemo(
+    () => episodeList.filter((e) => !e.hasFile).map((e) => e.number),
+    [episodeList]
+  );
+
+  const handleDownloadMissingPress = useCallback(() => {
+    const startNum = Number(start) || 1;
+    const endNum = Number(end) || Math.max(...availableNumbers, startNum);
+    const range = missingNumbers.filter((n) => n >= startNum && n <= endNum);
+
+    if (range.length > 0) {
+      setQueued(range);
+      downloadEpisodes(range);
+    }
+  }, [start, end, missingNumbers, availableNumbers, downloadEpisodes]);
+
   const handleToggleReleases = useCallback((episodeNumber: number) => {
     setOpenReleases((current) =>
       current === episodeNumber ? null : episodeNumber
@@ -535,6 +554,12 @@ function SiteShowDetailModal({
                       {isDownloading
                         ? translate('Downloading')
                         : translate('Download')}
+                    </Button>
+                    <Button
+                      isDisabled={isDownloading || missingNumbers.length === 0}
+                      onPress={handleDownloadMissingPress}
+                    >
+                      {translate('SitesDownloadMissing')}
                     </Button>
                   </div>
 

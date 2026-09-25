@@ -28,10 +28,17 @@ export const useDownloadEpisodes = (showId: number) => {
   const [error, setError] = useState<string | null>(null);
 
   const startOne = useCallback(
-    async (number: number, releaseUrl?: string) => {
-      const query = releaseUrl
-        ? `?releaseUrl=${encodeURIComponent(releaseUrl)}`
-        : '';
+    async (number: number, releaseUrl?: string, skipIfPresent = false) => {
+      const params = new URLSearchParams();
+      if (releaseUrl) {
+        params.set('releaseUrl', releaseUrl);
+      }
+
+      if (skipIfPresent) {
+        params.set('skipIfPresent', 'true');
+      }
+
+      const query = params.toString() ? `?${params.toString()}` : '';
 
       await fetchJson({
         path: getQueryPath(
@@ -47,31 +54,39 @@ export const useDownloadEpisodes = (showId: number) => {
     [showId]
   );
 
+  // A bulk range shouldn't re-fetch episodes you already have, and one
+  // episode failing (no release resolved, a transient error, ...)
+  // shouldn't stop every episode after it from being attempted.
   const downloadEpisodes = useCallback(
     async (episodeNumbers: number[]) => {
       setIsDownloading(true);
       setError(null);
 
-      try {
-        for (const number of episodeNumbers) {
-          await startOne(number);
-        }
+      const failures: number[] = [];
 
-        queryClient.invalidateQueries({ queryKey: ['/sitedownload'] });
-      } catch (e) {
+      for (const number of episodeNumbers) {
+        try {
+          await startOne(number, undefined, true);
+        } catch {
+          failures.push(number);
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['/sitedownload'] });
+      setIsDownloading(false);
+
+      if (failures.length > 0) {
         setError(
-          e instanceof Error
-            ? e.message
-            : 'Failed to start one or more downloads'
+          `Couldn't resolve a release for episode${failures.length > 1 ? 's' : ''} ${failures.join(', ')} -- the rest were queued.`
         );
-      } finally {
-        setIsDownloading(false);
       }
     },
     [startOne, queryClient]
   );
 
   // Single episode, optionally a specific release chosen from Search results.
+  // Always forces the download (skipIfPresent=false) -- this is the
+  // explicit Download/Redownload button on one row.
   const downloadEpisode = useCallback(
     async (number: number, releaseUrl?: string) => {
       setIsDownloading(true);

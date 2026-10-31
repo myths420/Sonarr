@@ -3,6 +3,10 @@
   <PropertyGroup>
     <AnalysisLevel>6.0-all</AnalysisLevel>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- NuGet audit advisories (NU1901-NU1904) are published after a release is
+         cut and break an otherwise unchanged build. Keep them as warnings. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
 

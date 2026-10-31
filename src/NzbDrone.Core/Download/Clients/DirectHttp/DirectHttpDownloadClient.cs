@@ -31,6 +31,10 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
         // page, an empty 200, or a cut-off transfer.
         private const long MinimumVideoBytes = 1_000_000;
 
+        // A failed transfer is reported to Sonarr so it can blocklist and
+        // re-search; after this long it is only noise in the queue.
+        private static readonly TimeSpan FailedRetention = TimeSpan.FromHours(1);
+
         private static readonly ConcurrentDictionary<string, DirectDownloadState> _items = new();
         private static readonly object _persistLock = new();
 
@@ -272,9 +276,45 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
             return (downloadFolder, Path.Combine(downloadFolder, safeTitle + ".mp4"));
         }
 
+        // Drops entries with nothing left to import. Sonarr only removes an
+        // item after importing a download it grabbed itself, so a failed
+        // transfer or an already-imported/removed file would otherwise sit in
+        // the queue forever ("Download wasn't grabbed by Sonarr").
+        private void PruneFinishedItems()
+        {
+            var now = DateTime.UtcNow;
+            var removed = false;
+
+            foreach (var state in _items.Values.ToList())
+            {
+                if (state.Status is not (DownloadItemStatus.Completed or DownloadItemStatus.Failed))
+                {
+                    continue;
+                }
+
+                state.FinishedAt ??= now;
+
+                var stale = state.Status == DownloadItemStatus.Failed
+                    ? now - state.FinishedAt.Value > FailedRetention
+                    : !_diskProvider.FileExists(state.FilePath);
+
+                if (stale && _items.TryRemove(state.DownloadId, out _))
+                {
+                    removed = true;
+                }
+            }
+
+            if (removed)
+            {
+                PersistState();
+            }
+        }
+
         public override IEnumerable<DownloadClientItem> GetItems()
         {
-            foreach (var state in _items.Values)
+            PruneFinishedItems();
+
+            foreach (var state in _items.Values.ToList())
             {
                 yield return new DownloadClientItem
                 {
@@ -364,6 +404,15 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
                 {
                     var onDisk = _diskProvider.FileExists(item.FilePath) && new FileInfo(item.FilePath).Length > 0;
 
+                    // Nothing left to import: a failed transfer, or a finished
+                    // one whose file is already gone (imported or removed).
+                    // Keeping them only fills the queue with entries Sonarr
+                    // skips forever.
+                    if (item.Status == DownloadItemStatus.Failed || (item.Status == DownloadItemStatus.Completed && !onDisk))
+                    {
+                        continue;
+                    }
+
                     // A download interrupted by a restart: keep it only if
                     // the file is fully on disk (so import can still pick it
                     // up). Otherwise drop it -- re-adding it as Failed makes
@@ -406,6 +455,7 @@ namespace NzbDrone.Core.Download.Clients.DirectHttp
             public long TotalSize { get; set; }
             public DownloadItemStatus Status { get; set; }
             public string Message { get; set; }
+            public DateTime? FinishedAt { get; set; }
             public CancellationTokenSource Cts { get; set; }
         }
 

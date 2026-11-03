@@ -74,6 +74,14 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             @"dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]+)|dai\.ly/([A-Za-z0-9]+)|dailymotion\.com[^""'\s]*[?&]video=([A-Za-z0-9]+)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        // Sites now embed a specific player (geo.dailymotion.com/player/
+        // <playerId>.html?video=<id>); the generic /embed/video/<id> page is
+        // refused ("Forbidden") for videos restricted to that player, so the
+        // player id is passed to the resolver too.
+        private static readonly Regex DailymotionPlayerId = new Regex(
+            @"dailymotion\.com/player/([A-Za-z0-9]+)\.html",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         // The "Select Video Server" list: a base64 iframe blob plus a human
         // label like "Hardsub English Dailymotion". Sites carry it either as
         // <option value="<base64>">label</option> (animexin/donghuastream) or
@@ -270,6 +278,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
 
             var baseUrl = fetch.PageResolverUrl.TrimEnd('/');
             var byId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var playerById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var sawLabelledServers = false;
 
             // Labelled server list first (base64 iframe blobs). The regex
@@ -322,6 +331,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 {
                     byId[id] = score;
                 }
+
+                var player = DailymotionPlayerId.Match(src.Groups[1].Value);
+                if (player.Success)
+                {
+                    playerById[id] = player.Groups[1].Value;
+                }
             }
 
             // Fall back to any bare (already-decoded) Dailymotion embed on
@@ -347,6 +362,11 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 logger.Debug("Dailymotion embed {0} (score {1}) for {2} episode {3}", kv.Key, kv.Value, seriesTitle, episodeNumber);
 
                 var url = $"{baseUrl}/dailymotion/fetch?v={Uri.EscapeDataString(kv.Key)}";
+                if (playerById.TryGetValue(kv.Key, out var playerId))
+                {
+                    url += $"&player={Uri.EscapeDataString(playerId)}";
+                }
+
                 if (!string.IsNullOrEmpty(episodeUrl))
                 {
                     url += $"&referer={Uri.EscapeDataString(episodeUrl)}";

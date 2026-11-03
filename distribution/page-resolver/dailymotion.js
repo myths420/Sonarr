@@ -120,7 +120,7 @@ function pickAudioUri(masterBody, masterUrl, streamInfLine) {
 // Returns { streamPath, isFmp4, height, dir, subPath, audio } -- one local
 // file with the full video for the highest variant <= maxHeight, plus the
 // separate audio file ({ path, isFmp4 }) when the variant has one.
-async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', maxHeight = 1080, timeoutMs = 60000 } = {}) {
+async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', maxHeight = 1080, timeoutMs = 60000, player = '' } = {}) {
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
     const context = await browser.newContext({ userAgent: UA, locale: 'en-US' });
@@ -138,7 +138,13 @@ async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', max
       }
     });
 
-    await page.goto(`https://www.dailymotion.com/embed/video/${id}`, {
+    // Sites embed a specific player (geo.dailymotion.com/player/<id>.html);
+    // the generic /embed/video/<id> page is "Forbidden" for videos
+    // restricted to that player, so load the same player the site does.
+    const embedUrl = player
+      ? `https://geo.dailymotion.com/player/${player}.html?video=${id}`
+      : `https://www.dailymotion.com/embed/video/${id}`;
+    await page.goto(embedUrl, {
       waitUntil: 'domcontentloaded',
       timeout: timeoutMs,
       referer,
@@ -231,7 +237,8 @@ async function dailymotionFetch(req, res, query) {
 
   let built;
   try {
-    built = await buildPlaylist(id, { referer, maxHeight });
+    const player = /^[A-Za-z0-9]+$/.test(query.get('player') || '') ? query.get('player') : '';
+    built = await buildPlaylist(id, { referer, maxHeight, player });
   } catch (err) {
     res.writeHead(502, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ error: String(err.message || err) }));

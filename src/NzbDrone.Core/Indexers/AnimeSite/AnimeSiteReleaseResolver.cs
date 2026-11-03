@@ -279,6 +279,12 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             var baseUrl = fetch.PageResolverUrl.TrimEnd('/');
             var byId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var playerById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // The page's own default iframe names the site's player even
+            // when the "Select Video Server" options only carry the generic
+            // /embed/video/<id> URL; use it for every id without its own.
+            var pagePlayer = DailymotionPlayerId.Match(episodeHtml);
+            var sitePlayerId = pagePlayer.Success ? pagePlayer.Groups[1].Value : null;
             var sawLabelledServers = false;
 
             // Labelled server list first (base64 iframe blobs). The regex
@@ -362,7 +368,8 @@ namespace NzbDrone.Core.Indexers.AnimeSite
                 logger.Debug("Dailymotion embed {0} (score {1}) for {2} episode {3}", kv.Key, kv.Value, seriesTitle, episodeNumber);
 
                 var url = $"{baseUrl}/dailymotion/fetch?v={Uri.EscapeDataString(kv.Key)}";
-                if (playerById.TryGetValue(kv.Key, out var playerId))
+                var playerId = playerById.TryGetValue(kv.Key, out var ownPlayer) ? ownPlayer : sitePlayerId;
+                if (!string.IsNullOrEmpty(playerId))
                 {
                     url += $"&player={Uri.EscapeDataString(playerId)}";
                 }

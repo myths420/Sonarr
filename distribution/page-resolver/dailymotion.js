@@ -44,7 +44,7 @@ async function fetchBuffer(url, referer) {
 // .m3u8 -- avoids the timestamp mangling (fast / jumpy playback) that
 // -fflags +genpts over an HLS input caused.
 // Returns { path, isFmp4 }.
-async function downloadSegments(mediaBody, mediaUrl, dir, referer) {
+async function downloadSegments(mediaBody, mediaUrl, dir, referer, name = 'all') {
   const abs = (u) => (/^https?:/.test(u) ? u : new URL(u, mediaUrl).href);
   const lines = mediaBody.split('\n');
   const parts = [];
@@ -58,7 +58,7 @@ async function downloadSegments(mediaBody, mediaUrl, dir, referer) {
   }
   if (parts.length === 0) throw new Error('media playlist had no segments');
 
-  const outPath = path.join(dir, isFmp4 ? 'all.mp4' : 'all.ts');
+  const outPath = path.join(dir, name + (isFmp4 ? '.mp4' : '.ts'));
   const out = fs.createWriteStream(outPath);
   const bufs = new Array(parts.length);
   let writeIdx = 0;
@@ -95,8 +95,31 @@ async function downloadSegments(mediaBody, mediaUrl, dir, referer) {
   return { path: outPath, isFmp4 };
 }
 
-// Returns { streamPath, isFmp4, height, dir } -- one local file with the
-// full video for the highest variant <= maxHeight.
+// URI of the separate audio rendition a variant points at, or null when
+// the variant carries its own audio. Newer (AV1) Dailymotion variants keep
+// the audio out of the video segments: the STREAM-INF line names an
+// AUDIO="<group>" and the master lists it as
+//   #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="<group>",...,URI="audio.m3u8"
+function pickAudioUri(masterBody, masterUrl, streamInfLine) {
+  const group = (streamInfLine.match(/AUDIO="([^"]+)"/i) || [])[1];
+  if (!group) return null;
+
+  const entries = [];
+  for (const line of masterBody.split('\n')) {
+    if (!/^#EXT-X-MEDIA:/i.test(line) || !/TYPE=AUDIO/i.test(line)) continue;
+    if ((line.match(/GROUP-ID="([^"]*)"/i) || [])[1] !== group) continue;
+    const uri = (line.match(/URI="([^"]+)"/i) || [])[1];
+    if (uri) entries.push({ uri, isDefault: /DEFAULT=YES/i.test(line) });
+  }
+  if (entries.length === 0) return null;
+
+  const chosen = entries.find((e) => e.isDefault) || entries[0];
+  return /^https?:/.test(chosen.uri) ? chosen.uri : new URL(chosen.uri, masterUrl).href;
+}
+
+// Returns { streamPath, isFmp4, height, dir, subPath, audio } -- one local
+// file with the full video for the highest variant <= maxHeight, plus the
+// separate audio file ({ path, isFmp4 }) when the variant has one.
 async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', maxHeight = 1080, timeoutMs = 60000 } = {}) {
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
@@ -139,7 +162,7 @@ async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', max
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
         const h = Number((lines[i].match(/RESOLUTION=\d+x(\d+)/) || [0, 0])[1]);
-        variants.push({ h, uri: (lines[i + 1] || '').trim() });
+        variants.push({ h, uri: (lines[i + 1] || '').trim(), info: lines[i] });
       }
     }
     if (variants.length === 0) throw new Error('master manifest had no variants');
@@ -157,9 +180,28 @@ async function buildPlaylist(id, { referer = 'https://www.dailymotion.com/', max
     }
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-'));
-    const seg = await downloadSegments(mediaBody, mediaUrl, dir, referer);
-    const subPath = await downloadEnglishVtt(playlists[masterUrl], masterUrl, dir, referer);
-    return { streamPath: seg.path, isFmp4: seg.isFmp4, height: pick.h, dir, subPath };
+    try {
+      const seg = await downloadSegments(mediaBody, mediaUrl, dir, referer);
+      const subPath = await downloadEnglishVtt(playlists[masterUrl], masterUrl, dir, referer);
+
+      let audio = null;
+      const audioUrl = pickAudioUri(playlists[masterUrl], masterUrl, pick.info);
+      if (audioUrl) {
+        const audioBody = await page.evaluate(async (au) => {
+          const r = await fetch(au);
+          return r.text();
+        }, audioUrl);
+        if (!String(audioBody).startsWith('#EXTM3U')) {
+          throw new Error('Dailymotion audio playlist fetch failed');
+        }
+        audio = await downloadSegments(audioBody, audioUrl, dir, referer, 'audio');
+      }
+
+      return { streamPath: seg.path, isFmp4: seg.isFmp4, height: pick.h, dir, subPath, audio };
+    } catch (err) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* */ }
+      throw err;
+    }
   } finally {
     await browser.close().catch(() => {});
   }
@@ -182,12 +224,21 @@ async function dailymotionFetch(req, res, query) {
     return res.end();
   }
 
+  // res 'close' is the real client-disconnect signal; req 'close' fires as soon
+  // as the request body is consumed, so it never cleaned up after a lost client.
+  let clientGone = false;
+  res.on('close', () => { clientGone = true; });
+
   let built;
   try {
     built = await buildPlaylist(id, { referer, maxHeight });
   } catch (err) {
     res.writeHead(502, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ error: String(err.message || err) }));
+  }
+  if (clientGone) {
+    try { fs.rmSync(built.dir, { recursive: true, force: true }); } catch (e) { /* */ }
+    return;
   }
 
   // Remux the concatenated stream to a real, seekable MP4 (moov atom at
@@ -198,19 +249,29 @@ async function dailymotionFetch(req, res, query) {
   const remux = () =>
     new Promise((resolve, reject) => {
       const args = ['-hide_banner', '-loglevel', 'error', '-i', built.streamPath];
-      if (built.subPath) args.push('-i', built.subPath);
-      args.push('-map', '0');
-      if (built.subPath) args.push('-map', '1:0');
+      let next = 1;
+      let audioIdx = -1;
+      let subIdx = -1;
+      if (built.audio) { args.push('-i', built.audio.path); audioIdx = next++; }
+      if (built.subPath) { args.push('-i', built.subPath); subIdx = next++; }
+      if (built.audio) {
+        // Video from the video file, audio from its own rendition.
+        args.push('-map', '0:v', '-map', audioIdx + ':a');
+      } else {
+        args.push('-map', '0');
+      }
+      if (subIdx >= 0) args.push('-map', subIdx + ':0');
       args.push('-c', 'copy');
-      if (!built.isFmp4) args.push('-bsf:a', 'aac_adtstoasc');
-      if (built.subPath) args.push('-c:s', 'mov_text', '-metadata:s:s:0', 'language=eng');
+      const audioIsTs = built.audio ? !built.audio.isFmp4 : !built.isFmp4;
+      if (audioIsTs) args.push('-bsf:a', 'aac_adtstoasc');
+      if (subIdx >= 0) args.push('-c:s', 'mov_text', '-metadata:s:s:0', 'language=eng');
       args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', '-y', outPath);
       const ff = spawn('ffmpeg', args);
       let errTail = '';
       ff.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); process.stderr.write(d); });
       ff.on('error', reject);
       ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg exit ' + code + ': ' + errTail))));
-      req.on('close', () => { try { ff.kill('SIGKILL'); } catch (e) { /* */ } });
+      res.on('close', () => { try { ff.kill('SIGKILL'); } catch (e) { /* */ } });
     });
 
   try {
@@ -238,7 +299,7 @@ async function dailymotionFetch(req, res, query) {
   const done = () => { try { fs.rmSync(built.dir, { recursive: true, force: true }); } catch (e) { /* */ } };
   stream.on('close', done);
   stream.on('error', () => { res.destroy(); done(); });
-  req.on('close', () => { stream.destroy(); done(); });
+  res.on('close', () => { stream.destroy(); done(); });
 }
 
 function hasFfmpeg() {

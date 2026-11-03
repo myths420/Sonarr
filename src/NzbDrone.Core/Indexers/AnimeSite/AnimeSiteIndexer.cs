@@ -152,7 +152,7 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             {
                 try
                 {
-                    var resolved = _siteShowService.Value.ResolveReleasesForSeries(series, seasonNumber, episodeNumber);
+                    var resolved = _siteShowService.Value.ResolveReleasesForSeries(series, seasonNumber, episodeNumber, Definition.Id);
 
                     foreach (var r in resolved.Where(r => !string.IsNullOrEmpty(r.Url) && seen.Add(r.Url)))
                     {

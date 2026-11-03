@@ -52,7 +52,7 @@ namespace NzbDrone.Core.AnimeSite
         // maps (season, episode) back to the right catalogue row and its
         // own episode number, then resolves. Used by the indexer's search
         // path so it doesn't have to re-find the show by title.
-        List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber);
+        List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber, int indexerId);
 
         // Adds this catalogue show to the Series tab. AniList-backed when a
         // match exists, otherwise built from the scraped episode list (see
@@ -320,22 +320,26 @@ namespace NzbDrone.Core.AnimeSite
                 : _catalogBrowser.BrowseEpisodes(options, show.Url, _logger);
         }
 
-        public List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber)
+        public List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber, int indexerId)
         {
             if (series == null)
             {
                 return new List<ResolvedRelease>();
             }
 
-            // Every catalogue row for this show, across ALL configured
-            // sites -- the series may have been added from a site whose
-            // download host is dead while another site has a working one.
-            var rows = CatalogueRowsFor(series, seasonNumber);
+            // Only the site(s) the show was added from / linked to. Every
+            // AnimeSite indexer is asked for each search, so each one
+            // answers for its own site and stays silent otherwise -- one
+            // site is fetched per episode, not all of them.
+            var homeSites = HomeSourceLists(series);
+            if (homeSites.Count > 0 && !homeSites.Contains(indexerId))
+            {
+                return new List<ResolvedRelease>();
+            }
 
-            // Prefer sites known to serve mediafire (resolvable, no captcha).
-            rows = rows
-                .OrderByDescending(r => (r.PosterUrl ?? string.Empty).Contains("animexin"))
-                .ThenBy(r => r.Id)
+            var rows = CatalogueRowsFor(series, seasonNumber)
+                .Where(r => r.SourceListId == indexerId)
+                .OrderBy(r => r.Id)
                 .ToList();
 
             foreach (var row in rows)
@@ -349,6 +353,30 @@ namespace NzbDrone.Core.AnimeSite
 
             _logger.Debug("No site resolved a release for series '{0}' S{1}E{2} ({3} candidate rows)", series.Title, seasonNumber, episodeNumber, rows.Count);
             return new List<ResolvedRelease>();
+        }
+
+        // The catalogue sites a series' episodes come from: the row it was
+        // created from, plus any row hand-linked to it. Empty when neither
+        // is known (an AniList-backed series with no site link).
+        private HashSet<int> HomeSourceLists(Series series)
+        {
+            var sites = new HashSet<int>();
+
+            if (SiteSeriesIds.IsSiteId(series.TvdbId))
+            {
+                var origin = _repository.Find(SiteSeriesIds.ToSiteShowId(series.TvdbId));
+                if (origin != null)
+                {
+                    sites.Add(origin.SourceListId);
+                }
+            }
+
+            foreach (var row in _repository.FindByMappedSeriesId(series.Id))
+            {
+                sites.Add(row.SourceListId);
+            }
+
+            return sites;
         }
 
         private List<SiteShow> CatalogueRowsFor(Series series, int seasonNumber)
@@ -367,7 +395,13 @@ namespace NzbDrone.Core.AnimeSite
             // the series carries.
             if (SiteSeriesIds.IsSiteId(series.TvdbId))
             {
-                Add(_repository.Get(SiteSeriesIds.ToSiteShowId(series.TvdbId)));
+                Add(_repository.Find(SiteSeriesIds.ToSiteShowId(series.TvdbId)));
+            }
+
+            // Rows hand-linked to this series for exactly this season.
+            foreach (var linked in _repository.FindByMappedSeriesId(series.Id).Where(r => r.MappedSeason == seasonNumber))
+            {
+                Add(linked);
             }
 
             foreach (var aniListId in series.AniListIds)

@@ -34,6 +34,12 @@ WORKDIR /app
 COPY --from=build /src/_output/net10.0/linux-x64/publish/ .
 COPY --from=build /src/_output/UI ./UI
 
+# Sonarr looks for ffprobe next to its binaries (/app/ffprobe). The publish
+# output doesn't include it, so without this every media-info read fails and
+# a Direct HTTP download stays at "Unable to determine if file is a sample"
+# in the queue, never importing. The ffmpeg package above provides it.
+RUN ln -sf "$(command -v ffprobe)" /app/ffprobe
+
 EXPOSE 8989
 VOLUME ["/config"]
 

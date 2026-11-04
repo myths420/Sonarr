@@ -126,12 +126,14 @@ namespace NzbDrone.Core.Indexers.AnimeSite
             }
 
             // Direct file hosts (Mediafire etc.) first -- a plain .mp4 grab
-            // beats a headless capture + remux. Then the Rumble "Dark
-            // Server" (donghuaworld -- higher bitrate, up to ~2.5K), then
-            // the Dailymotion English embed (1080p) as the last fallback.
+            // beats a headless capture + remux. Then the Dailymotion English
+            // embed (1080p), then the Rumble "Dark Server" as the fallback:
+            // Rumble's embed now answers the page-resolver with 403, so a
+            // Sonarr grab that picked it first (it takes the top of this
+            // list and doesn't fall back) failed every time.
             // The Sites downloader walks the list top to bottom.
-            kept.AddRange(RumbleReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
             kept.AddRange(DailymotionReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
+            kept.AddRange(RumbleReleases(options.Fetch, episodeHtml, episodeUrl, seriesTitle, episodeNumber, logger));
 
             return kept;
         }

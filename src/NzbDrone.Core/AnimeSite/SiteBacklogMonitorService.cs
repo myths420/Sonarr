@@ -40,13 +40,20 @@ namespace NzbDrone.Core.AnimeSite
                 return;
             }
 
-            var cutoff = DateTime.UtcNow.AddDays(-BacklogMonitorDays);
+            var now = DateTime.UtcNow;
+            var cutoff = now.AddDays(-BacklogMonitorDays);
+
+            // Episodes that continue on from what's already on disk are
+            // "new" even once they're older than the cutoff -- e.g. ones
+            // missed during an outage -- so the automatic search keeps going.
+            var lastOnDisk = SiteNewEpisodes.LastOnDiskAirDate(_episodeService.GetEpisodeBySeries(series.Id));
 
             var stale = message.Added.Concat(message.Updated)
                 .Where(e => e.Monitored
                             && !e.HasFile
                             && e.AirDateUtc.HasValue
-                            && e.AirDateUtc.Value < cutoff)
+                            && e.AirDateUtc.Value < cutoff
+                            && !SiteNewEpisodes.IsNew(e, lastOnDisk, now))
                 .GroupBy(e => e.Id)
                 .Select(g => g.First())
                 .ToList();

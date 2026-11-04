@@ -15,11 +15,6 @@ namespace NzbDrone.Core.AnimeSite
         // Per-episode re-search cooldown.
         private static readonly TimeSpan SearchCooldown = TimeSpan.FromHours(6);
 
-        // Only episodes that aired recently. Older gaps are the backlog,
-        // which is downloaded by hand from the Sites page, not re-searched
-        // every six hours.
-        private static readonly TimeSpan NewEpisodeWindow = TimeSpan.FromDays(14);
-
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
         private readonly IManageCommandQueue _commandQueueManager;
@@ -69,12 +64,16 @@ namespace NzbDrone.Core.AnimeSite
             {
                 var episodes = _episodeService.GetEpisodeBySeries(series.Id);
 
+                // Only new episodes (see SiteNewEpisodes); older gaps are the
+                // backlog, downloaded by hand from the Sites page.
+                var lastOnDisk = SiteNewEpisodes.LastOnDiskAirDate(episodes);
+
                 wanted.AddRange(episodes
                     .Where(e => e.Monitored
                                 && !e.HasFile
                                 && e.AirDateUtc.HasValue
                                 && e.AirDateUtc.Value <= now
-                                && now - e.AirDateUtc.Value <= NewEpisodeWindow
+                                && SiteNewEpisodes.IsNew(e, lastOnDisk, now)
                                 && (e.LastSearchTime == null || now - e.LastSearchTime.Value > SearchCooldown))
                     .Select(e => e.Id));
             }

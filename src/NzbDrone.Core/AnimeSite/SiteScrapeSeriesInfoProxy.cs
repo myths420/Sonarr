@@ -168,13 +168,19 @@ namespace NzbDrone.Core.AnimeSite
             foreach (var show in _siteShowRepository.FindByMappedSeriesId(seriesId))
             {
                 var season = show.MappedSeason > 0 ? show.MappedSeason : 1;
-                episodes.AddRange(EpisodesFromCache(show.GetCachedEpisodes(), season));
+
+                // No absolute number: for an anime series RefreshEpisodeService
+                // keeps ONE episode per absolute number (the highest season's),
+                // and every row numbers its episodes 1..N, so rows mapped to
+                // different seasons would knock each other's episodes out
+                // (Tales Of Demons And Gods kept S10 and lost most of S4-S9).
+                episodes.AddRange(EpisodesFromCache(show.GetCachedEpisodes(), season, withAbsoluteNumber: false));
             }
 
             return episodes;
         }
 
-        private static List<Episode> EpisodesFromCache(List<SiteShowEpisode> cached, int seasonNumber)
+        private static List<Episode> EpisodesFromCache(List<SiteShowEpisode> cached, int seasonNumber, bool withAbsoluteNumber = true)
         {
             return cached
                 .Where(e => e.Number > 0)
@@ -185,7 +191,7 @@ namespace NzbDrone.Core.AnimeSite
                 {
                     SeasonNumber = seasonNumber,
                     EpisodeNumber = e.Number,
-                    AbsoluteEpisodeNumber = e.Number,
+                    AbsoluteEpisodeNumber = withAbsoluteNumber ? e.Number : null,
                     Title = string.IsNullOrWhiteSpace(e.Title) ? $"Episode {e.Number}" : e.Title,
                     AirDate = e.AirDateUtc?.ToString(Episode.AIR_DATE_FORMAT),
                     AirDateUtc = e.AirDateUtc,

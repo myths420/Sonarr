@@ -54,6 +54,10 @@ namespace NzbDrone.Core.AnimeSite
         // path so it doesn't have to re-find the show by title.
         List<ResolvedRelease> ResolveReleasesForSeries(Series series, int seasonNumber, int episodeNumber, int indexerId);
 
+        // Catalogue row ids to download a season's episodes from, on the
+        // site(s) the series came from, in the order to try them.
+        List<int> FindDownloadRowIds(Series series, int seasonNumber);
+
         // Adds this catalogue show to the Series tab. AniList-backed when a
         // match exists, otherwise built from the scraped episode list (see
         // AniListSeriesIds / SiteSeriesIds).
@@ -353,6 +357,22 @@ namespace NzbDrone.Core.AnimeSite
 
             _logger.Debug("No site resolved a release for series '{0}' S{1}E{2} ({3} candidate rows)", series.Title, seasonNumber, episodeNumber, rows.Count);
             return new List<ResolvedRelease>();
+        }
+
+        public List<int> FindDownloadRowIds(Series series, int seasonNumber)
+        {
+            if (series == null)
+            {
+                return new List<int>();
+            }
+
+            var homeSites = HomeSourceLists(series);
+
+            return CatalogueRowsFor(series, seasonNumber)
+                .Where(r => homeSites.Count == 0 || homeSites.Contains(r.SourceListId))
+                .OrderBy(r => r.Id)
+                .Select(r => r.Id)
+                .ToList();
         }
 
         // The catalogue sites a series' episodes come from: the row it was

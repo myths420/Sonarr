@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
-using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.MetadataSource.AniList;
 using NzbDrone.Core.Tv;
@@ -12,21 +11,29 @@ namespace NzbDrone.Core.AnimeSite
 {
     public class SiteSeriesSyncService : IExecute<SiteSeriesSyncCommand>
     {
-        // Per-episode re-search cooldown.
-        private static readonly TimeSpan SearchCooldown = TimeSpan.FromHours(6);
+        // Downloads started per run. Each one resolves its sources first, and
+        // the downloader runs only a few at a time anyway; whatever is left
+        // is picked up by the next run.
+        private const int MaxDownloadsPerRun = 30;
 
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
+        private readonly ISiteShowService _siteShowService;
+        private readonly ISiteDownloadService _siteDownloadService;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly Logger _logger;
 
         public SiteSeriesSyncService(ISeriesService seriesService,
                                      IEpisodeService episodeService,
+                                     ISiteShowService siteShowService,
+                                     ISiteDownloadService siteDownloadService,
                                      IManageCommandQueue commandQueueManager,
                                      Logger logger)
         {
             _seriesService = seriesService;
             _episodeService = episodeService;
+            _siteShowService = siteShowService;
+            _siteDownloadService = siteDownloadService;
             _commandQueueManager = commandQueueManager;
             _logger = logger;
         }
@@ -58,7 +65,12 @@ namespace NzbDrone.Core.AnimeSite
                 _commandQueueManager.Push(new RefreshSeriesCommand(staleIds), trigger: CommandTrigger.Scheduled);
             }
 
-            var wanted = new List<int>();
+            var running = _siteDownloadService.GetDownloads()
+                .Where(d => d.Status == SiteDownloadStatus.Downloading)
+                .ToList();
+
+            var missing = 0;
+            var started = 0;
 
             foreach (var series in aniListSeries)
             {
@@ -68,24 +80,62 @@ namespace NzbDrone.Core.AnimeSite
                 // backlog, downloaded by hand from the Sites page.
                 var lastOnDisk = SiteNewEpisodes.LastOnDiskAirDate(episodes);
 
-                wanted.AddRange(episodes
+                var wanted = episodes
                     .Where(e => e.Monitored
                                 && !e.HasFile
                                 && e.AirDateUtc.HasValue
                                 && e.AirDateUtc.Value <= now
-                                && SiteNewEpisodes.IsNew(e, lastOnDisk, now)
-                                && (e.LastSearchTime == null || now - e.LastSearchTime.Value > SearchCooldown))
-                    .Select(e => e.Id));
+                                && SiteNewEpisodes.IsNew(e, lastOnDisk, now))
+                    .OrderBy(e => e.SeasonNumber)
+                    .ThenBy(e => e.EpisodeNumber)
+                    .ToList();
+
+                missing += wanted.Count;
+
+                foreach (var episode in wanted)
+                {
+                    if (started >= MaxDownloadsPerRun)
+                    {
+                        break;
+                    }
+
+                    if (running.Any(d => d.SeriesId == series.Id && d.EpisodeNumber == episode.EpisodeNumber))
+                    {
+                        continue;
+                    }
+
+                    if (StartDownload(series, episode))
+                    {
+                        started++;
+                    }
+                }
             }
 
-            if (wanted.Count == 0)
+            _logger.Info("Sites series sync: {0} aired-but-missing new episode(s) across {1} series, started {2} download(s)", missing, aniListSeries.Count, started);
+        }
+
+        // Exactly what the Download button on the Sites page does: resolve the
+        // episode's sources on the show's own site and download them, trying
+        // each in turn. Tries the show's catalogue rows until one yields a
+        // download; null = nothing on the site yet, or we already have it.
+        private bool StartDownload(Series series, Episode episode)
+        {
+            foreach (var rowId in _siteShowService.FindDownloadRowIds(series, episode.SeasonNumber))
             {
-                _logger.Debug("AniList series sync: {0} series checked, nothing missing to search", aniListSeries.Count);
-                return;
+                try
+                {
+                    if (_siteDownloadService.StartDownload(rowId, episode.EpisodeNumber, null, skipIfPresent: true) != null)
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Sites series sync: couldn't start '{0}' S{1:00}E{2:00}", series.Title, episode.SeasonNumber, episode.EpisodeNumber);
+                }
             }
 
-            _logger.Info("AniList series sync: searching for {0} aired-but-missing episode(s) across {1} series", wanted.Count, aniListSeries.Count);
-            _commandQueueManager.Push(new EpisodeSearchCommand(wanted), trigger: CommandTrigger.Scheduled);
+            return false;
         }
     }
 }

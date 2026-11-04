@@ -509,6 +509,7 @@ namespace NzbDrone.Core.AnimeSite
             show.MappedSeriesId = series.Id;
             show.MappedSeason = season is > 0 ? season.Value : SeasonTitleParser.Parse(show.Title).Season;
             _repository.Update(show);
+            EnsureEpisodeCache(show);
 
             _logger.Info("Linked site show '{0}' to series {1} '{2}' as season {3}", show.Title, series.Id, series.Title, show.MappedSeason);
 
@@ -962,6 +963,61 @@ namespace NzbDrone.Core.AnimeSite
             RescanSyntheticSeries();
         }
 
+        private List<SiteShowEpisode> ScrapeCachedEpisodes(AnimeSiteCatalogueOptions options, SiteShow show)
+        {
+            return _catalogBrowser.BrowseEpisodes(options, show.Url, _logger)
+                .Where(e => e.Number > 0)
+                .GroupBy(e => e.Number)
+                .Select(g => g.First())
+                .OrderBy(e => e.Number)
+                .Select(e => new SiteShowEpisode
+                {
+                    Number = e.Number,
+                    Title = e.Title,
+                    AirDateUtc = SiteEpisodeTitle.ParseAirDate(e.Title)
+                })
+                .ToList();
+        }
+
+        // A hand-linked row feeds its episodes into the series from this
+        // cache, which the background sync only fills a batch at a time --
+        // so fill it now, or the linked season wouldn't show up until the
+        // sync got round to that row.
+        private void EnsureEpisodeCache(SiteShow show)
+        {
+            if (show.GetCachedEpisodes().Count > 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var options = GetCatalogueOptions(show.SourceListId);
+                if (options == null)
+                {
+                    return;
+                }
+
+                var episodes = ScrapeCachedEpisodes(options, show);
+                if (episodes.Count == 0)
+                {
+                    return;
+                }
+
+                show.SetCachedEpisodes(episodes);
+                if (episodes.Count > show.Episodes)
+                {
+                    show.Episodes = episodes.Count;
+                }
+
+                _repository.Update(show);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Couldn't fill the episode cache for linked row '{0}'", show.Title);
+            }
+        }
+
         // Refresh the cached scraped episode list (number + title + parsed
         // air date) for shows whose cache is missing or older than the TTL.
         // A scheduled run only does a batch so it cycles through the
@@ -993,18 +1049,7 @@ namespace NzbDrone.Core.AnimeSite
             {
                 try
                 {
-                    var episodes = _catalogBrowser.BrowseEpisodes(options, show.Url, _logger)
-                        .Where(e => e.Number > 0)
-                        .GroupBy(e => e.Number)
-                        .Select(g => g.First())
-                        .OrderBy(e => e.Number)
-                        .Select(e => new SiteShowEpisode
-                        {
-                            Number = e.Number,
-                            Title = e.Title,
-                            AirDateUtc = SiteEpisodeTitle.ParseAirDate(e.Title)
-                        })
-                        .ToList();
+                    var episodes = ScrapeCachedEpisodes(options, show);
 
                     if (episodes.Count == 0)
                     {

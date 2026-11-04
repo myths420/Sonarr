@@ -980,16 +980,12 @@ namespace NzbDrone.Core.AnimeSite
         }
 
         // A hand-linked row feeds its episodes into the series from this
-        // cache, which the background sync only fills a batch at a time --
-        // so fill it now, or the linked season wouldn't show up until the
-        // sync got round to that row.
+        // cache, which the background sync only fills a batch at a time and
+        // can leave empty, stale or partial (a row with 52 episodes on the
+        // site could have 1 cached). Re-read the row's episode list on every
+        // link so the linked season comes through complete right away.
         private void EnsureEpisodeCache(SiteShow show)
         {
-            if (show.GetCachedEpisodes().Count > 0)
-            {
-                return;
-            }
-
             try
             {
                 var options = GetCatalogueOptions(show.SourceListId);
